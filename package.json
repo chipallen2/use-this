@@ -1,0 +1,13 @@
+{
+  "name": "use-this",
+  "version": "1.0.0",
+  "description": "USE THIS - today's best model for chatting, coding, and crazy-hard coding. Static index.html rendered weekly by GitHub Actions.",
+  "type": "module",
+  "scripts": {
+    "scrape": "node scripts/scrape.mjs data",
+    "render": "node scripts/render.mjs data dist/index.html",
+    "build": "node scripts/render.mjs data dist/index.html"
+  },
+  "engines": { "node": ">=20" },
+  "dependencies": { "playwright": "^1.55.0" }
+}
