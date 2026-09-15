@@ -20,9 +20,11 @@ jobs:
       - run: npm ci
       - run: npx playwright install chromium --with-deps
       - name: Scrape + render
+        env:
+          RECALC_URL: ${{ secrets.RECALC_URL }}
         run: |
           npm run scrape
-          RECALC_URL="${{ secrets.RECALC_URL }}" npm run render
+          npm run render
       - name: Commit if changed
         run: |
           git config user.name "chipallen2"
