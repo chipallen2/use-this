@@ -177,7 +177,7 @@ document.addEventListener("keydown",function(e){if(e.key==="Escape")document.que
 var btn=document.getElementById("recalc");
 if(btn){btn.addEventListener("click",function(){
 btn.disabled=true;btn.textContent="Checking...";
-fetch("RECALC_URL_PLACEHOLDER",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+fetch("https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
 .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
 .then(function(res){
 if(res.j&&res.j.recalculated){btn.textContent="Fresh picks incoming - check back soon!";}
