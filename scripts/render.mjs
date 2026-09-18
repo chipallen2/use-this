@@ -115,10 +115,13 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
   const costs = pts.map((p) => p.costPerTask);
   const key = (p) => p.openRouterId + "|" + p.effort;
   const frontier = pts.reduce((a, b) => (b.score > a.score || (b.score === a.score && b.costPerTask < a.costPerTask) ? b : a));
-  const yLo = Math.min(cutoff, ...scores), yHi = Math.max(...scores);
-  const yPad = Math.max(0.5, (yHi - yLo) * 0.2);
-  const yMin = yLo - yPad, yMax = yHi + yPad * 1.2;
-  const y = (s) => B - ((s - yMin) / (yMax - yMin)) * (B - T);
+  const yHi = Math.max(...scores);
+  const yPadTop = Math.max(0.5, (yHi - cutoff) * 0.35);
+  const yMax = yHi + yPadTop;
+  const yMinZoom = cutoff - Math.max(0.5, (yHi - cutoff) * 0.3);
+  const yMinFull = 0; // expanded view always bottoms at exactly 0
+  const y = (s) => B - ((s - yMinZoom) / (yMax - yMinZoom)) * (B - T);
+  const yF = (s) => B - ((s - yMinFull) / (yMax - yMinFull)) * (B - T);
   const cLo = Math.min(...costs), cHi = Math.max(...costs);
   const logMin = Math.log10(Math.max(0.05, cLo * 0.85)), logMax = Math.log10(cHi * 1.12);
   const x = (c) => L + ((Math.log10(Math.max(0.05, c)) - logMin) / Math.max(0.01, logMax - logMin)) * (R - L);
@@ -129,21 +132,27 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
   };
   // Gridlines + ticks
   let grid = "";
-  // winning zone: above cutoff
-  grid += `<rect x="${L}" y="${T}" width="${R - L}" height="${Math.max(0, Math.round(yCut) - T)}" fill="#e9fbe8"/>`;
-  for (const t of niceTicks(yMin, yMax, 6)) {
+  // winning zone: above cutoff (height recomputed by the range toggle)
+  grid += `<rect x="${L}" y="${T}" width="${R - L}" height="${Math.max(0, Math.round(yCut) - T)}" fill="#e9fbe8" data-zone="1"/>`;
+  const yGridZoom = niceTicks(yMinZoom, yMax, 6).map((t) => {
     const yy = Math.round(y(t));
-    grid += `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>`;
-    grid += `<text x="${L - 7}" y="${yy + 4}" font-size="11" fill="#495057" text-anchor="end">${t}%</text>`;
-  }
+    return `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>` +
+      `<text x="${L - 7}" y="${yy + 4}" font-size="11" fill="#495057" text-anchor="end">${t}%</text>`;
+  }).join("");
+  const yGridFull = niceTicks(yMinFull, yMax, 10).map((t) => {
+    const yy = Math.round(yF(t));
+    return `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>` +
+      `<text x="${L - 7}" y="${yy + 4}" font-size="11" fill="#495057" text-anchor="end">${t}%</text>`;
+  }).join("");
+  grid = `<g class="ygrid-zoom">${yGridZoom}</g><g class="ygrid-full" style="display:none">${yGridFull}</g>`;
   for (const t of moneyTicks(cLo, cHi)) {
     const xx = Math.round(x(t));
     grid += `<line x1="${xx}" y1="${T}" x2="${xx}" y2="${B}" stroke="#e9ecef" stroke-width="1"/>`;
     grid += `<text x="${xx}" y="${B + 20}" font-size="11" fill="#495057" text-anchor="middle">$${t}</text>`;
   }
   // Cutoff line
-  const cut = `<line x1="${L}" y1="${Math.round(yCut)}" x2="${R}" y2="${Math.round(yCut)}" stroke="#e03131" stroke-width="2" stroke-dasharray="8 6"/>` +
-    `<text x="${R - 4}" y="${Math.round(yCut) - 7}" font-size="12" font-weight="900" fill="#e03131" text-anchor="end">CUTOFF ${cutoff}% (${thresholdPct}% of frontier)</text>`;
+  const cut = `<line x1="${L}" y1="${Math.round(yCut)}" x2="${R}" y2="${Math.round(yCut)}" stroke="#e03131" stroke-width="2" stroke-dasharray="8 6" data-y="${cutoff}"/>` +
+    `<text x="${R - 4}" y="${Math.round(yCut) - 7}" font-size="12" font-weight="900" fill="#e03131" text-anchor="end" data-y="${cutoff}" data-dy="-7">CUTOFF ${cutoff}% (${thresholdPct}% of frontier)</text>`;
   // Dots + labels with simple collision stagger.
   // Below-cutoff dots render dimmed (smaller, translucent gray) but stay
   // tappable with full tooltips. Only above-cutoff dots get text labels,
@@ -161,7 +170,7 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
     const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isAbove ? "" : " (below cutoff)") + (isWin ? " - USE THIS" : "");
     const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "") + (isAbove ? "" : ` data-below="1"`);
     if (isWin) {
-      dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" ${dat}><title>${esc(tip)}</title></circle>`;
+      dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
       // USE THIS badge: same pill-beside-dot language as FRONTIER, but dominant -
       // card-accent fill, larger pill, star kept. Merged when winner == frontier.
       const accent = color === "chat" ? ["#c5ff32", "#141414"] : color === "everyday" ? ["#ff795e", "#141414"] : ["#7926ec", "#fff"];
@@ -170,22 +179,23 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
       let wbx = cx + 20;
       if (wbx + wbw > R) wbx = cx - 20 - wbw;
       if (wbx < L) wbx = L;
-      labels += `<g><rect x="${wbx}" y="${cy - 13}" width="${wbw}" height="26" rx="13" fill="${accent[0]}" stroke="#141414" stroke-width="2"/><text x="${wbx + wbw / 2}" y="${cy + 5}" font-size="13" font-weight="900" fill="${accent[1]}" text-anchor="middle">${esc(winLabel)}</text></g>`;
-      labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle">${esc(short(p))}</text>`;
+      labels += `<g><rect x="${wbx}" y="${cy - 13}" width="${wbw}" height="26" rx="13" fill="${accent[0]}" stroke="#141414" stroke-width="2" data-y="${p.score}" data-dy="-13" data-badge="1"/><text x="${wbx + wbw / 2}" y="${cy + 5}" font-size="13" font-weight="900" fill="${accent[1]}" text-anchor="middle" data-y="${p.score}" data-dy="5">${esc(winLabel)}</text></g>`;
+      labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle" data-y="${p.score}" data-dy="32">${esc(short(p))}</text>`;
       placed.push({ x: cx, row: 1 }, { x: cx, row: -1 });
     } else if (isAbove) {
-      dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}" ${dat}><title>${esc(tip)}</title></circle>`;
+      dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
       // alternate above/below, flip if too close to last label on that row
       let row = placed.length % 2 === 0 ? 1 : -1;
       const tooClose = (r) => placed.some((q) => q.row === r && Math.abs(q.x - cx) < 62);
       if (tooClose(row)) row = -row;
       if (tooClose(row)) row = 0; // give up staggering, put further above
       const ly = row === 1 ? cy - 14 : row === -1 ? cy + 24 : cy - 26;
-      labels += `<text x="${cx}" y="${ly}" font-size="10" font-weight="700" fill="#343a40" text-anchor="middle">${esc(short(p))}</text>`;
+      const ldy = +((ly - y(p.score)).toFixed(2));
+      labels += `<text x="${cx}" y="${ly}" font-size="10" font-weight="700" fill="#343a40" text-anchor="middle" data-y="${p.score}" data-dy="${ldy}">${esc(short(p))}</text>`;
       placed.push({ x: cx, row });
     } else {
       // Below cutoff: dimmed, unlabeled, still tappable with full tooltip.
-      dots += `<circle cx="${cx}" cy="${cy}" r="4" fill="${c}" opacity="0.45" ${dat}><title>${esc(tip)}</title></circle>`;
+      dots += `<circle cx="${cx}" cy="${cy}" r="4" fill="${c}" opacity="0.45" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
     }
   }
   const fx = Math.round(x(frontier.costPerTask)), fy = Math.round(y(frontier.score));
@@ -198,21 +208,22 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
     let bx = fx + 14;
     if (bx + bw > R) bx = fx - 14 - bw;
     if (bx < L) bx = L;
-    frontTag = `<g><rect x="${bx}" y="${fy - 11}" width="${bw}" height="22" rx="11" fill="#141414"/><text x="${bx + bw / 2}" y="${fy + 4}" font-size="12" font-weight="900" fill="#fff" text-anchor="middle">${esc(fLabel)}</text></g>`;
+    frontTag = `<g><rect x="${bx}" y="${fy - 11}" width="${bw}" height="22" rx="11" fill="#141414" data-y="${frontier.score}" data-dy="-11" data-badge="1"/><text x="${bx + bw / 2}" y="${fy + 4}" font-size="12" font-weight="900" fill="#fff" text-anchor="middle" data-y="${frontier.score}" data-dy="4">${esc(fLabel)}</text></g>`;
   }
   const orgs = [...new Set(pts.map((p) => orgOf(p.openRouterId)))];
   const legend = '<div class="legend">' + orgs.map((o) => '<span><i style="background:' + (ORG_COLORS[o] || "#868e96") + '"></i>' + esc(o) + '</span>').join("") + '</div>';
-  return { legend, svg: `<svg viewBox="0 0 ${W} ${H + 40}" role="img" aria-label="Scatter chart of cost per task versus ${esc(benchLabel)} score">
+  return { legend, svg: `<svg viewBox="0 0 ${W} ${H + 40}" role="img" aria-label="Scatter chart of cost per task versus ${esc(benchLabel)} score" data-ymin-zoom="${+yMinZoom.toFixed(3)}" data-ymax="${+yMax.toFixed(3)}" data-cutoff="${cutoff}" data-t="${T}" data-b="${B}">
+<defs><clipPath id="clip-${color}"><rect x="${L}" y="${T}" width="${R - L}" height="${B - T}"/></clipPath></defs>
 ${grid}
 <line x1="${L}" y1="${T}" x2="${L}" y2="${B}" stroke="#adb5bd" stroke-width="1"/>
 <line x1="${L}" y1="${B}" x2="${R}" y2="${B}" stroke="#adb5bd" stroke-width="1"/>
 ${cut}
-${dots}
+<g clip-path="url(#clip-${color})">${dots}</g>
 ${labels}
 ${frontTag}
 <text x="${L}" y="${B + 38}" font-size="12" font-weight="700" fill="#495057">&#8592; Cheaper</text>
 <text x="${R}" y="${B + 38}" font-size="12" font-weight="700" fill="#495057" text-anchor="end">Pricier &#8594;</text>
-<text x="${(L + R) / 2}" y="${B + 38}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">Cost per task ($)</text>
+<text x="${(L + R) / 2}" y="${B + 38}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">Cost per task ($) (log scale)</text>
 <text x="14" y="210" font-size="12" font-weight="700" fill="#495057" transform="rotate(-90 14 210)" text-anchor="middle">${esc(benchLabel)} score (%)</text>
 </svg>` };
 }
@@ -226,8 +237,8 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const isCoding = key !== "agent";
   // Coding tables show the blend math transparently: Combined + per-signal raw/norm.
   // deepScore is already 0-100 (norm == raw); designScore is Elo min-max normalized to 0-100.
-  const fmtDeep = (p) => p.deepScore == null ? "-" : `${p.deepScore}% (norm ${p.deepScore})`;
-  const fmtDesign = (p) => p.designScore == null ? "-" : `Elo ${p.designElo} (norm ${p.designScore})`;
+  const fmtDeep = (p) => p.deepScore == null ? "-" : `${p.deepScore}%`;
+  const fmtDesign = (p) => p.designScore == null ? "-" : `Elo ${p.designElo}*`;
   const sortVal = (v) => v == null ? "" : String(v);
   const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
     const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
@@ -248,7 +259,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
     return `<tr${isWin ? ' class="win"' : below ? ' class="below"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
   }).join("");
   const head = isCoding
-    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE</button></th><th><button type="button" data-col="4" data-type="num">Design</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
+    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE</button></th><th><button type="button" data-col="4" data-type="num">Design *</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
     : `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>`;
   return `<div class="modal" id="modal-${key}" aria-hidden="true"><div class="modal-card ${color}" role="dialog" aria-label="${cardTitle(key)} detail">
 <button class="close" data-close="${key}" aria-label="Close">&times;</button>
@@ -256,11 +267,13 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 <p class="winner"><span class="use">Use this</span><span class="name">${esc(l1 + (l2 ? " " + l2 : ""))}</span><span class="think">${esc(effortLabel(w.effort))}</span></p>
 <p class="why">${whyText}</p>
 <div class="chart-box"><h2>Quality vs cost</h2><p class="sub">Left = cheaper. Up = better ${esc(benchLabel)} score. Hover or tap any dot for details.</p>
+<button class="yrange" type="button" data-mode="zoom">View All</button>
 ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
 <p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (Elo min-max normalized); models missing one signal use the other at 100%."}</p>
 <table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
+${isCoding ? '<p class="norm-note">* Design Elo min-max normalized to 0-100 for blending.</p>' : ""}
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
@@ -340,6 +353,8 @@ th{font-size:12px;letter-spacing:.06em;text-transform:uppercase}
 th button{background:none;border:0;padding:0;font:inherit;font-size:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:inherit;cursor:pointer}
 th button:hover{text-decoration:underline}
 .chart-box{position:relative}
+.yrange{margin:0 0 10px;padding:6px 14px;border:2px solid #141414;border-radius:999px;background:#fff;color:#141414;font-size:12px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;cursor:pointer}
+.norm-note{margin:10px 2px 0;font-size:12px;color:#495057}
 svg circle.dot{cursor:pointer}
 .tip{position:absolute;z-index:5;max-width:230px;background:#141414;color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.35)}
 .tip strong{display:block;font-size:14px;margin-bottom:2px}
@@ -429,6 +444,35 @@ return dir==="asc"?cmp:-cmp;
 });
 rows.forEach(function(r){body.appendChild(r);});
 });
+});
+});
+// Y range toggle: zoomed (competitive range) <-> full (0 to top).
+document.querySelectorAll(".chart-box").forEach(function(box){
+var tbtn=box.querySelector(".yrange"),tsvg=box.querySelector("svg");
+if(!tbtn||!tsvg)return;
+tbtn.addEventListener("click",function(e){
+e.stopPropagation();
+var full=tbtn.getAttribute("data-mode")!=="full";
+tbtn.setAttribute("data-mode",full?"full":"zoom");
+tbtn.textContent=full?"Zoom In":"View All";
+var yMinZ=parseFloat(tsvg.getAttribute("data-ymin-zoom")),
+yMax=parseFloat(tsvg.getAttribute("data-ymax")),
+T=parseFloat(tsvg.getAttribute("data-t")),
+B=parseFloat(tsvg.getAttribute("data-b")),
+cut=parseFloat(tsvg.getAttribute("data-cutoff"));
+var Y=function(s){return full?B-((s-0)/(yMax-0))*(B-T):B-((s-yMinZ)/(yMax-yMinZ))*(B-T);};
+tsvg.querySelectorAll("[data-y]").forEach(function(el){
+var v=parseFloat(el.getAttribute("data-y")),dy=parseFloat(el.getAttribute("data-dy")||"0");
+var ny=Math.round(Y(v)+dy),tag=el.tagName.toLowerCase();
+if(tag==="circle")el.setAttribute("cy",ny);
+else if(tag==="text")el.setAttribute("y",ny);
+else if(tag==="line"){el.setAttribute("y1",ny);el.setAttribute("y2",ny);}
+else if(tag==="rect")el.setAttribute("y",ny);
+});
+var z=tsvg.querySelector("[data-zone]");
+if(z)z.setAttribute("height",Math.max(0,Math.round(Y(cut)-T)));
+tsvg.querySelectorAll(".ygrid-zoom").forEach(function(g){g.style.display=full?"none":"";});
+tsvg.querySelectorAll(".ygrid-full").forEach(function(g){g.style.display=full?"":"none";});
 });
 });
 var btn=document.getElementById("recalc");
