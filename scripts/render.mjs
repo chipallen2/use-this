@@ -45,7 +45,7 @@ function displayName(id) {
 
 const effortLabel = (e) => (e ? `${e} thinking` : "default");
 
-// Short label for the blend-source column in coding tables.
+// (shortSource kept for why-text fallbacks; Signal column removed in favor of per-signal columns.)
 function shortSource(s) {
   if (!s) return "";
   if (s.startsWith("50% DeepSWE")) return "blend";
@@ -213,14 +213,32 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const cutoff = picks[key].cutoff;
   const [l1, l2] = displayName(w.openRouterId);
   const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
-  const hasSources = list.some((p) => p.sources);
+  const isCoding = key !== "agent";
+  // Coding tables show the blend math transparently: Combined + per-signal raw/norm.
+  // deepScore is already 0-100 (norm == raw); designScore is Elo min-max normalized to 0-100.
+  const fmtDeep = (p) => p.deepScore == null ? "-" : `${p.deepScore}% (norm ${p.deepScore})`;
+  const fmtDesign = (p) => p.designScore == null ? "-" : `Elo ${p.designElo} (norm ${p.designScore})`;
+  const sortVal = (v) => v == null ? "" : String(v);
   const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
     const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
     const [n1, n2] = displayName(p.openRouterId);
-    const src = hasSources ? `<td>${esc(shortSource(p.sources))}</td>` : "";
-    return `<tr${isWin ? ' class="win"' : ""}><td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td><td>${esc(p.effort || "default")}</td><td>${p.score}%</td><td>$${p.costPerTask}</td>${src}</tr>`;
+    const nameCell = `<td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td>`;
+    const thinkCell = `<td>${esc(p.effort || "default")}</td>`;
+    const priceCell = `<td data-v="${p.costPerTask}">$${p.costPerTask}</td>`;
+    let scoreCells, headExtra;
+    if (isCoding) {
+      scoreCells = `<td data-v="${p.score}">${p.score}%</td><td data-v="${sortVal(p.deepScore)}">${esc(fmtDeep(p))}</td><td data-v="${sortVal(p.designScore)}">${esc(fmtDesign(p))}</td>`;
+      headExtra = "";
+    } else {
+      scoreCells = `<td data-v="${p.score}">${p.score}%</td>`;
+      headExtra = "";
+    }
+    void headExtra;
+    return `<tr${isWin ? ' class="win"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
   }).join("");
-  const srcHead = hasSources ? "<th>Signal</th>" : "";
+  const head = isCoding
+    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE</button></th><th><button type="button" data-col="4" data-type="num">Design</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
+    : `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>`;
   return `<div class="modal" id="modal-${key}" aria-hidden="true"><div class="modal-card ${color}" role="dialog" aria-label="${cardTitle(key)} detail">
 <button class="close" data-close="${key}" aria-label="Close">&times;</button>
 <p class="kicker">${cardTitle(key)} - detail</p>
@@ -231,7 +249,7 @@ ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
 <p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (Elo min-max normalized); models missing one signal use the other at 100%."}</p>
-<table class="sortable"><caption>All contenders</caption><thead><tr><th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>${srcHead}</tr></thead><tbody>${rows}</tbody></table>
+<table class="sortable"><caption>All contenders</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
@@ -387,8 +405,14 @@ b.textContent=label+(b===btn?(dir==="asc"?" ▲":" ▼"):"");
 });
 var rows=Array.prototype.slice.call(body.rows);
 rows.sort(function(a,b){
-var va=a.cells[col].textContent.trim(),vb=b.cells[col].textContent.trim();
-var cmp=num?(parseFloat(va.replace(/[^0-9.]/g,""))-parseFloat(vb.replace(/[^0-9.]/g,""))):va.localeCompare(vb);
+var ca=a.cells[col],cb=b.cells[col];
+var va=(ca.getAttribute("data-v")!=null&&ca.getAttribute("data-v")!=="")?ca.getAttribute("data-v"):ca.textContent.trim();
+var vb=(cb.getAttribute("data-v")!=null&&cb.getAttribute("data-v")!=="")?cb.getAttribute("data-v"):cb.textContent.trim();
+if(num&&(va===""||vb==="")){
+if(va===""&&vb==="")return 0;
+return (va==="")?1:-1;
+}
+var cmp=num?(parseFloat(va)-parseFloat(vb)):va.localeCompare(vb);
 return dir==="asc"?cmp:-cmp;
 });
 rows.forEach(function(r){body.appendChild(r);});
