@@ -26,7 +26,7 @@ const round = (n, digits = 2) => Number(Number(n).toFixed(digits));
 
 const normalizeModelName = (name) =>
   name.toLowerCase().replaceAll("adaptive reasoning", "").replaceAll("effort", "")
-    .replace(/[()[\]]/g, " ").replace(/\s+/g, " ").trim();
+    .replace(/[()[\]]/g, " ").replace(/[-_]/g, " ").replace(/\s+/g, " ").trim();
 
 const splitConfig = (raw) => {
   const match = raw.match(/^(.*?)\s*\[([^\]]+)]\s*$/);
@@ -83,7 +83,12 @@ function findOpenRouterModel(modelName, openRouterModels) {
     ["minimax-m3", "minimax/minimax-m3"],
     ["gpt-5.6-sol-xhigh", "openai/gpt-5.6-sol"],
     ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
+    ["muse-spark-1.3-max", "meta/muse-spark-1.3"],
+    ["muse-spark-1.3-contributor", "meta/muse-spark-1.3-contributor"],
     ["muse-spark-1.3", "meta/muse-spark-1.3"],
+    ["muse-spark-1.2-contributor", "meta/muse-spark-1.2-contributor"],
+    ["muse-spark-1.2", "meta/muse-spark-1.2"],
+    ["muse-spark-1.1", "meta/muse-spark-1.1"],
     ["kimi-k2.7-code", "moonshotai/kimi-k2.7-code"],
     ["qwen3.7-max", "qwen/qwen3.7-max"],
     ["camellia", null],
@@ -94,9 +99,17 @@ function findOpenRouterModel(modelName, openRouterModels) {
     ["deepseek-v4-pro", "deepseek/deepseek-v4-pro"],
     ["muse-spark", "meta/muse-spark"],
   ];
-  for (const [key, idPrefix] of aliases) {
-    if (needle.includes(key)) {
-      const hit = openRouterModels.find((m) => m.id === idPrefix || m.id.startsWith(`${idPrefix}`));
+  const normKey = (k) => k.toLowerCase().replace(/[-_]/g, " ");
+  // Longest alias key first so "muse-spark-1.3-contributor" beats "muse-spark-1.3".
+  const ordered = [...aliases].sort((a, b) => b[0].length - a[0].length);
+  for (const [key, idPrefix] of ordered) {
+    if (!idPrefix) continue; // unmapped leaderboard-only names (camellia, yoda, ...)
+    if (needle.includes(normKey(key))) {
+      // Exact-ID match wins over prefix match: "meta/muse-spark-1.3" must
+      // not resolve to its "-contributor" twin (or vice versa).
+      const exact = openRouterModels.find((m) => m.id === idPrefix);
+      if (exact) return exact;
+      const hit = openRouterModels.find((m) => m.id.startsWith(`${idPrefix}`));
       if (hit) return hit;
     }
   }
@@ -117,6 +130,22 @@ function effortIsSupported(candidate, openRouterModel) {
       openRouterModel.supportedParameters.includes("reasoning_effort");
   }
   return efforts.includes(candidate.effort);
+}
+
+async function getDesignArenaPricing() {
+  // Design Arena publishes per-model list prices at /api/registry (pricing.<modelId>).
+  // Their Pareto chart blends them as (3*input + output)/4 per 1M tokens -
+  // same formula we use for the OpenRouter fallback. Returns Map(modelId -> blend).
+  const response = await fetch("https://www.designarena.ai/api/registry");
+  if (!response.ok) throw new Error(`Design Arena registry HTTP ${response.status}`);
+  const json = await response.json();
+  const map = new Map();
+  for (const [id, p] of Object.entries(json.pricing ?? {})) {
+    if (p?.agents?.perGeneration != null) map.set(id, Number(p.agents.perGeneration));
+    else if (p?.builders?.perGeneration != null) map.set(id, Number(p.builders.perGeneration));
+    else if (p?.text) map.set(id, (3 * Number(p.text.input) + Number(p.text.output)) / 4);
+  }
+  return map;
 }
 
 async function scrapeDesignArena() {
@@ -145,7 +174,8 @@ async function scrapeDesignArena() {
       elo: round(Number(r.elo), 1),
       battles: Number(r.battles),
       winRate: Number(r.winRate),
-      costPerTask: null, // filled from OpenRouter blended pricing below
+      costPerTask: null, // filled from blended pricing below
+      daPricePerMillion: null, // filled from Design Arena registry below
     }));
 }
 
@@ -233,11 +263,67 @@ function attachOpenRouter(results, openRouterModels) {
   return [...best.values()];
 }
 
+// Contributor twin: OpenRouter bills the identical muse-spark-1.3 weights at a
+// contributor discount (~12x cheaper). Leaderboards list them once, so every
+// regular meta/muse-spark-1.3 entry gets a twin carrying the same benchmark
+// scores (AA index, blend) at contributor prices. Cost/task rescales by the
+// per-entry blend ratio (contribBlend / regularBlend, (i + 3o)/4 over the
+// entry's own token counts when known, else the per-1M ratio) so observed
+// DeepSWE avg-cost token mixes rescale correctly. Twin displays as
+// "Muse Spark 1.3 Contributor" via the render displayName map.
+function addContributorTwins(pool, openRouterModels) {
+  const contrib = openRouterModels.find((m) => m.id === "meta/muse-spark-1.3-contributor");
+  const regular = openRouterModels.find((m) => m.id === "meta/muse-spark-1.3");
+  if (!contrib || !regular) return pool;
+  const per1MRatio = ((contrib.promptPerMillion + 3 * contrib.completionPerMillion) / 4) /
+    ((regular.promptPerMillion + 3 * regular.completionPerMillion) / 4);
+  const out = [...pool];
+  for (const x of pool) {
+    if (x.openRouterId !== "meta/muse-spark-1.3") continue;
+    let ratio = per1MRatio;
+    if (x.costPerTask != null) {
+      const pi = regular.promptPerMillion, po = regular.completionPerMillion;
+      const ci = contrib.promptPerMillion, co = contrib.completionPerMillion;
+      // DeepSWE rows carry outputTokens; prompt tokens unknown - assume
+      // 1:1 prompt:output mix (conservative; real mixes favor output, where
+      // the discount is steepest).
+      const ot = x.outputTokens ?? 0, pt = x.outputTokens ?? 0;
+      const regCost = pi * pt + po * ot, conCost = ci * pt + co * ot;
+      if (regCost > 0) ratio = conCost / regCost;
+    }
+    const twin = {
+      ...x,
+      openRouterId: "meta/muse-spark-1.3-contributor",
+      costPerTask: Math.max(0.01, round(x.costPerTask * ratio)),
+      orPromptPerMillion: contrib.promptPerMillion,
+      orCompletionPerMillion: contrib.completionPerMillion,
+    };
+    out.push(twin);
+  }
+  return out;
+}
+
+// Median blended-token usage (prompt + 3*completion, /1M scale divisor applied
+// by caller) across the DeepSWE pool, used to cost Design-only models at a
+// comparable scale to measured DeepSWE task costs.
+function medianUsageTokens(deepSWEPool) {
+  const toks = deepSWEPool
+    .map((d) => (d.orPromptPerMillion && d.orCompletionPerMillion && d.costPerTask
+      ? d.costPerTask / (((d.orPromptPerMillion) + 3 * (d.orCompletionPerMillion)) / 4) * 1_000_000
+      : null))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => a - b);
+  if (!toks.length) return 16250; // fallback: 5k prompt + 20k completion blended
+  return toks[Math.floor(toks.length / 2)];
+}
+
 // Blend rule (locked): per canonical model (openRouterId + effort), if both
 // DeepSWE and Design Arena scores present -> 50/50; only one -> use it at 100%.
 // Design Arena entries carry effort=null and costPerTask=null; they inherit
 // effort + cost from their DeepSWE counterpart when one exists, else effort
-// stays null and cost is estimated from OpenRouter blended pricing.
+// stays null and cost is estimated from blended per-1M pricing: Design Arena
+// registry price when available (same (3i+o)/4 formula their Pareto chart uses),
+// else OpenRouter (input + 3*output)/4 fallback; nominal 20k completion + 5k prompt tokens.
 function blendCodingScores(deepSWEPool, designArenaPool) {
   const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null }
   for (const d of deepSWEPool) {
@@ -260,6 +346,7 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
             score: round((d.score + g.design.score) / 2, 1),
             sources: "50% DeepSWE + 50% Design Arena Full-Stack",
             deepScore: d.score, designScore: g.design.score, designElo: g.design.elo,
+            daPricePerMillion: g.design.daPricePerMillion ?? null,
           });
         } else {
           blended.push({ ...d, sources: "DeepSWE only - no Design Arena data yet", deepScore: d.score, designScore: null, designElo: null });
@@ -267,10 +354,14 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
       }
     } else if (g.design) {
       // Design-only model: no DeepSWE effort/cost; estimate cost/task from
-      // OpenRouter blended price at a nominal 20k completion + 5k prompt tokens.
+      // blended per-1M price (Design Arena registry first, OpenRouter fallback)
+      // at DeepSWE-scale token usage: median output+prompt tokens across the
+      // current DeepSWE pool, so the estimate is comparable to measured costs.
       const z = g.design;
-      const prompt = z.orPromptPerMillion ?? 0, completion = z.orCompletionPerMillion ?? 0;
-      const estCost = round((prompt * 5000 + completion * 20000) / 1_000_000, 2);
+      const perMillion = z.daPricePerMillion
+        ?? ((z.orPromptPerMillion ?? 0) + 3 * (z.orCompletionPerMillion ?? 0)) / 4;
+      const usageTokens = medianUsageTokens(deepSWEPool);
+      const estCost = round(perMillion * usageTokens / 1_000_000, 2);
       blended.push({
         ...z, effort: null, costPerTask: estCost,
         sources: "Design Arena only - no DeepSWE data yet", deepScore: null, designScore: z.score, designElo: z.elo,
@@ -293,8 +384,14 @@ async function main() {
   console.log("Fetching Design Arena...");
   let designArenaRaw = [];
   try {
-    designArenaRaw = await scrapeDesignArena();
-    console.log(`Design Arena: ${designArenaRaw.length} models`);
+    const [board, pricing] = await Promise.all([scrapeDesignArena(), getDesignArenaPricing().catch((e) => {
+      console.warn("Design Arena registry fetch failed, OpenRouter fallback for pricing:", e.message);
+      return new Map();
+    })]);
+    for (const row of board) row.daPricePerMillion = pricing.get(row.model) ?? null;
+    designArenaRaw = board;
+    const withPrice = board.filter((r) => r.daPricePerMillion != null).length;
+    console.log(`Design Arena: ${board.length} models (${withPrice} with registry price)`);
   } catch (error) {
     console.warn("Design Arena fetch failed, continuing DeepSWE-only:", error.message);
   }
@@ -310,10 +407,10 @@ async function main() {
     await browser.close();
   }
 
-  const deepSWEPool = attachOpenRouter(deepSWERaw, openRouterModels);
+  const deepSWEPool = addContributorTwins(attachOpenRouter(deepSWERaw, openRouterModels), openRouterModels);
   const designPool = attachOpenRouter(designArenaRaw, openRouterModels);
-  const coding = blendCodingScores(deepSWEPool, designPool);
-  const agentPool = attachOpenRouter(intelligenceRaw, openRouterModels);
+  const coding = addContributorTwins(blendCodingScores(deepSWEPool, designPool), openRouterModels);
+  const agentPool = addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels);
 
   // Agent frontier: best score among reasonably priced (<= $3/task), per selector discipline
   const reasonablyPriced = agentPool.filter((x) => x.costPerTask <= 3);
@@ -333,6 +430,7 @@ async function main() {
     speed: x.speed ?? null, openRouterId: x.openRouterId,
     sources: x.sources ?? null, deepScore: x.deepScore ?? null,
     designScore: x.designScore ?? null, designElo: x.designElo ?? null,
+    daPricePerMillion: x.daPricePerMillion ?? null,
   });
 
   const agentElig = pickCheapestAbove(agentPool, agentCutoff);
