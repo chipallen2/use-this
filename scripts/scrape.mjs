@@ -326,6 +326,11 @@ function medianUsageTokens(deepSWEPool) {
 // else OpenRouter (input + 3*output)/4 fallback; nominal 20k completion + 5k prompt tokens.
 function blendCodingScores(deepSWEPool, designArenaPool) {
   const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null }
+  // DeepSWE raw scores are percentages; min-max normalize across the pool to
+  // 0-100 so they blend apples-to-apples with normalized Design scores.
+  const raws = deepSWEPool.map((d) => d.score).filter((s) => Number.isFinite(s));
+  const deepMin = Math.min(...raws), deepMax = Math.max(...raws);
+  const normDeep = (s) => deepMax > deepMin ? round(((s - deepMin) / (deepMax - deepMin)) * 100, 1) : 50;
   for (const d of deepSWEPool) {
     let g = byKey.get(d.openRouterId);
     if (!g) { g = { efforts: new Map(), design: null }; byKey.set(d.openRouterId, g); }
@@ -341,15 +346,16 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
     if (g.efforts.size) {
       for (const [, d] of g.efforts) {
         if (g.design) {
+          const nd = normDeep(d.score);
           blended.push({
             ...d,
-            score: round((d.score + g.design.score) / 2, 1),
+            score: round((nd + g.design.score) / 2, 1),
             sources: "50% DeepSWE + 50% Design Arena Full-Stack",
-            deepScore: d.score, designScore: g.design.score, designElo: g.design.elo,
+            deepScore: nd, deepRaw: d.score, designScore: g.design.score, designElo: g.design.elo,
             daPricePerMillion: g.design.daPricePerMillion ?? null,
           });
         } else {
-          blended.push({ ...d, sources: "DeepSWE only - no Design Arena data yet", deepScore: d.score, designScore: null, designElo: null });
+          blended.push({ ...d, score: normDeep(d.score), sources: "DeepSWE only - no Design Arena data yet", deepScore: normDeep(d.score), deepRaw: d.score, designScore: null, designElo: null });
         }
       }
     } else if (g.design) {
@@ -364,7 +370,7 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
       const estCost = round(perMillion * usageTokens / 1_000_000, 2);
       blended.push({
         ...z, effort: null, costPerTask: estCost,
-        sources: "Design Arena only - no DeepSWE data yet", deepScore: null, designScore: z.score, designElo: z.elo,
+        sources: "Design Arena only - no DeepSWE data yet", deepScore: null, deepRaw: null, designScore: z.score, designElo: z.elo,
       });
     }
   }
@@ -429,6 +435,7 @@ async function main() {
     outputTokens: x.outputTokens ?? null, steps: x.steps ?? null,
     speed: x.speed ?? null, openRouterId: x.openRouterId,
     sources: x.sources ?? null, deepScore: x.deepScore ?? null,
+    deepRaw: x.deepRaw ?? null,
     designScore: x.designScore ?? null, designElo: x.designElo ?? null,
     daPricePerMillion: x.daPricePerMillion ?? null,
   });

@@ -114,6 +114,14 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
   const scores = pts.map((p) => p.score);
   const costs = pts.map((p) => p.costPerTask);
   const key = (p) => p.openRouterId + "|" + p.effort;
+  // Tooltip signal detail for coding pools (entries carry deepRaw/designElo).
+  const signalTip = (p) => {
+    if (p.deepRaw == null && p.designElo == null) return "";
+    const bits = [];
+    if (p.deepRaw != null) bits.push(`DeepSWE ${p.deepRaw}%`);
+    if (p.designElo != null) bits.push(`Design Elo ${p.designElo}`);
+    return " (" + bits.join(", ") + ")";
+  };
   const frontier = pts.reduce((a, b) => (b.score > a.score || (b.score === a.score && b.costPerTask < a.costPerTask) ? b : a));
   const yHi = Math.max(...scores);
   const yPadTop = Math.max(0.5, (yHi - cutoff) * 0.35);
@@ -167,7 +175,7 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
     const isAbove = above(p);
     const cx = Math.round(x(p.costPerTask)), cy = Math.round(y(p.score));
     const c = isAbove ? orgColor(p.openRouterId) : "#adb5bd";
-    const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isAbove ? "" : " (below cutoff)") + (isWin ? " - USE THIS" : "");
+    const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isAbove ? "" : " (below cutoff)") + (isWin ? " - USE THIS" : "") + signalTip(p);
     const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "") + (isAbove ? "" : ` data-below="1"`);
     if (isWin) {
       dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
@@ -236,8 +244,8 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
   const isCoding = key !== "agent";
   // Coding tables show the blend math transparently: Combined + per-signal raw/norm.
-  // deepScore is already 0-100 (norm == raw); designScore is Elo min-max normalized to 0-100.
-  const fmtDeep = (p) => p.deepScore == null ? "-" : `${p.deepScore}%`;
+  // Both signals are min-max normalized to 0-100 for blending; table shows raw DeepSWE % + Elo.
+  const fmtDeep = (p) => p.deepScore == null ? "-" : (p.deepRaw != null ? `${p.deepRaw}%*` : `${p.deepScore}%`);
   const fmtDesign = (p) => p.designScore == null ? "-" : `Elo ${p.designElo}*`;
   const sortVal = (v) => v == null ? "" : String(v);
   const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
@@ -259,7 +267,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
     return `<tr${isWin ? ' class="win"' : below ? ' class="below"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
   }).join("");
   const head = isCoding
-    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE</button></th><th><button type="button" data-col="4" data-type="num">Design *</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
+    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE *</button></th><th><button type="button" data-col="4" data-type="num">Design *</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
     : `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>`;
   return `<div class="modal" id="modal-${key}" aria-hidden="true"><div class="modal-card ${color}" role="dialog" aria-label="${cardTitle(key)} detail">
 <button class="close" data-close="${key}" aria-label="Close">&times;</button>
@@ -271,9 +279,9 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
-<p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (Elo min-max normalized); models missing one signal use the other at 100%."}</p>
+<p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized to 0-100); models missing one signal use the other at 100%."}</p>
 <table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
-${isCoding ? '<p class="norm-note">* Design Elo min-max normalized to 0-100 for blending.</p>' : ""}
+${isCoding ? '<p class="norm-note">* Both signals min-max normalized to 0-100 for blending. DeepSWE shows raw test %; Design shows raw Elo.</p>' : ""}
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
