@@ -144,13 +144,16 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
     const cx = Math.round(x(p.costPerTask)), cy = Math.round(y(p.score));
     const c = orgColor(p.openRouterId);
     const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isWin ? " - USE THIS" : "");
+    const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "");
     if (isWin) {
-      dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4"><title>${esc(tip)}</title></circle>`;
-      labels += `<text x="${cx}" y="${cy - 22}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">USE THIS &#9733;</text>`;
+      dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" ${dat}><title>${esc(tip)}</title></circle>`;
+      const winLabel = key(p) === keyFront ? `USE THIS &#9733; · FRONTIER ${frontier.score}%` : "USE THIS &#9733;";
+      const lx = Math.max(105, Math.min(cx, R - 105));
+      labels += `<text x="${lx}" y="${cy - 22}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">${winLabel}</text>`;
       labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle">${esc(short(p))}</text>`;
       placed.push({ x: cx, row: 1 }, { x: cx, row: -1 });
     } else {
-      dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}"><title>${esc(tip)}</title></circle>`;
+      dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}" ${dat}><title>${esc(tip)}</title></circle>`;
       // alternate above/below, flip if too close to last label on that row
       let row = placed.length % 2 === 0 ? 1 : -1;
       const tooClose = (r) => placed.some((q) => q.row === r && Math.abs(q.x - cx) < 62);
@@ -162,12 +165,17 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
     }
   }
   const fx = Math.round(x(frontier.costPerTask)), fy = Math.round(y(frontier.score));
-  const fl = fy + 52 > B ? fy - 48 : fy + 52;
-  const frontTag = keyFront === keyWin ?
-    `<text x="${Math.min(fx + 8, R - 120)}" y="${fl}" font-size="12" font-weight="900" fill="#141414" text-anchor="start">FRONTIER ${frontier.score}% = USE THIS &#9733;</text>` +
-    `<line x1="${Math.min(fx + 8, R - 120)}" y1="${fl - 5}" x2="${fx}" y2="${fy - 14}" stroke="#141414" stroke-width="1.5"/>` :
-    `<text x="${Math.min(fx + 8, R - 120)}" y="${fl}" font-size="12" font-weight="900" fill="#141414" text-anchor="start">FRONTIER ${frontier.score}% (best score)</text>` +
-    `<line x1="${Math.min(fx + 8, R - 120)}" y1="${fl - 5}" x2="${fx}" y2="${fy - 14}" stroke="#141414" stroke-width="1.5"/>`;
+  // FRONTIER badge: small dark pill directly beside the frontier dot, no leader line.
+  // (When frontier == winner the label merges into the USE THIS tag above the dot.)
+  let frontTag = "";
+  if (keyFront !== keyWin) {
+    const fLabel = `FRONTIER ${frontier.score}%`;
+    const bw = Math.round(fLabel.length * 7.4 + 22);
+    let bx = fx + 14;
+    if (bx + bw > R) bx = fx - 14 - bw;
+    if (bx < L) bx = L;
+    frontTag = `<g><rect x="${bx}" y="${fy - 11}" width="${bw}" height="22" rx="11" fill="#141414"/><text x="${bx + bw / 2}" y="${fy + 4}" font-size="12" font-weight="900" fill="#fff" text-anchor="middle">${esc(fLabel)}</text></g>`;
+  }
   const orgs = [...new Set(pts.map((p) => orgOf(p.openRouterId)))];
   const legend = '<div class="legend">' + orgs.map((o) => '<span><i style="background:' + (ORG_COLORS[o] || "#868e96") + '"></i>' + esc(o) + '</span>').join("") + '</div>';
   return { legend, svg: `<svg viewBox="0 0 ${W} ${H + 40}" role="img" aria-label="Scatter chart of cost per task versus ${esc(benchLabel)} score">
@@ -191,7 +199,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const cutoff = picks[key].cutoff;
   const [l1, l2] = displayName(w.openRouterId);
   const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
-  const rows = [...list].sort((a, b) => a.costPerTask - b.costPerTask).map((p) => {
+  const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
     const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
     const [n1, n2] = displayName(p.openRouterId);
     return `<tr${isWin ? ' class="win"' : ""}><td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td><td>${esc(p.effort || "default")}</td><td>${p.score}%</td><td>$${p.costPerTask}</td></tr>`;
@@ -201,11 +209,12 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 <p class="kicker">${cardTitle(key)} - detail</p>
 <p class="winner"><span class="use">Use this</span><span class="name">${esc(l1 + (l2 ? " " + l2 : ""))}</span><span class="think">${esc(effortLabel(w.effort))}</span></p>
 <p class="why">${whyText}</p>
-<div class="chart-box"><h2>Quality vs cost</h2><p class="sub">Left = cheaper. Up = better ${esc(benchLabel)} score. Hover any dot for details.</p>
+<div class="chart-box"><h2>Quality vs cost</h2><p class="sub">Left = cheaper. Up = better ${esc(benchLabel)} score. Hover or tap any dot for details.</p>
 ${ch.legend}
 ${ch.svg}
+<div class="tip" hidden></div>
 <p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.</p>
-<table><caption>All contenders</caption><tr><th>Model</th><th>Thinking</th><th>Score</th><th>Price/task</th></tr>${rows}</table>
+<table class="sortable"><caption>All contenders</caption><thead><tr><th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th></tr></thead><tbody>${rows}</tbody></table>
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
@@ -282,6 +291,12 @@ table{width:100%;margin-top:20px;border-collapse:collapse;font-size:14px;backgro
 caption{text-align:left;font-weight:900;font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:14px 16px 0}
 th,td{text-align:left;padding:11px 14px;border-top:2px solid #ff795e}
 th{font-size:12px;letter-spacing:.06em;text-transform:uppercase}
+th button{background:none;border:0;padding:0;font:inherit;font-size:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:inherit;cursor:pointer}
+th button:hover{text-decoration:underline}
+.chart-box{position:relative}
+svg circle.dot{cursor:pointer}
+.tip{position:absolute;z-index:5;max-width:230px;background:#141414;color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.35)}
+.tip strong{display:block;font-size:14px;margin-bottom:2px}
 tr.win td{background:#141414;color:#fff;font-weight:900}
 .id-row{margin-top:16px;background:#141414;color:#fff;border-radius:14px;padding:14px 16px;font-size:14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .id-row code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;background:#2a2a2a;padding:8px 12px;border-radius:8px;word-break:break-all}
@@ -311,14 +326,58 @@ ${modal("hard", "hard", "DeepSWE v1.1", 97, why.hard)}
 <script>
 (function(){
 function open(key){var m=document.getElementById("modal-"+key);if(m){m.classList.add("open");m.setAttribute("aria-hidden","false");}}
-function close(key){var m=document.getElementById("modal-"+key);if(m){m.classList.remove("open");m.setAttribute("aria-hidden","true");}}
+function close(key){var m=document.getElementById("modal-"+key);if(m){m.classList.remove("open");m.setAttribute("aria-hidden","true");var t=m.querySelector(".tip");if(t)t.hidden=true;}}
 document.querySelectorAll("[data-open]").forEach(function(el){
 el.addEventListener("click",function(){open(el.getAttribute("data-open"));});
 el.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();open(el.getAttribute("data-open"));}});
 });
 document.querySelectorAll("[data-close]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();close(b.getAttribute("data-close"));});});
 document.querySelectorAll(".modal").forEach(function(m){m.addEventListener("click",function(e){if(e.target===m)m.classList.remove("open");});});
-document.addEventListener("keydown",function(e){if(e.key==="Escape")document.querySelectorAll(".modal.open").forEach(function(m){m.classList.remove("open");});});
+document.addEventListener("keydown",function(e){if(e.key==="Escape")document.querySelectorAll(".modal.open").forEach(function(m){m.classList.remove("open");var t=m.querySelector(".tip");if(t)t.hidden=true;});});
+// Tap/hover tooltips for chart dots (touch + desktop; native <title> covers desktop hover).
+document.querySelectorAll(".chart-box").forEach(function(box){
+var svg=box.querySelector("svg"),tip=box.querySelector(".tip");
+if(!svg||!tip)return;
+svg.addEventListener("click",function(e){
+var dot=e.target&&e.target.closest?e.target.closest("circle.dot"):null;
+if(!dot){tip.hidden=true;return;}
+e.stopPropagation();
+var s="<strong>"+dot.getAttribute("data-name")+(dot.getAttribute("data-win")?" &#9733; USE THIS":"")+"</strong>"+dot.getAttribute("data-org")+" · Score "+dot.getAttribute("data-score")+"% · $"+dot.getAttribute("data-cost")+"/task";
+tip.innerHTML=s;
+tip.style.visibility="hidden";tip.hidden=false;
+var svgR=svg.getBoundingClientRect(),boxR=box.getBoundingClientRect();
+var cx=parseFloat(dot.getAttribute("cx")),cy=parseFloat(dot.getAttribute("cy"));
+var px=svgR.left-boxR.left+(cx/760)*svgR.width,py=svgR.top-boxR.top+(cy/520)*svgR.height;
+var tw=tip.offsetWidth,th=tip.offsetHeight;
+var left=px+14;if(left+tw>boxR.width-8)left=px-tw-14;if(left<8)left=8;
+var top=py-th-14;if(top<8)top=py+18;
+tip.style.left=left+"px";tip.style.top=top+"px";tip.style.visibility="";
+});
+});
+// Sortable data tables: click Model / Score / Price headers to toggle asc/desc.
+document.querySelectorAll("table.sortable").forEach(function(tbl){
+var body=tbl.querySelector("tbody");
+tbl.querySelectorAll("th button[data-col]").forEach(function(btn){
+btn.addEventListener("click",function(e){
+e.stopPropagation();
+var col=parseInt(btn.getAttribute("data-col"),10);
+var num=btn.getAttribute("data-type")==="num";
+var dir=btn.getAttribute("data-dir")==="asc"?"desc":"asc";
+btn.setAttribute("data-dir",dir);
+tbl.querySelectorAll("th button[data-col]").forEach(function(b){
+var label=b.textContent.replace(/ [▲▼]$/,"");
+b.textContent=label+(b===btn?(dir==="asc"?" ▲":" ▼"):"");
+});
+var rows=Array.prototype.slice.call(body.rows);
+rows.sort(function(a,b){
+var va=a.cells[col].textContent.trim(),vb=b.cells[col].textContent.trim();
+var cmp=num?(parseFloat(va.replace(/[^0-9.]/g,""))-parseFloat(vb.replace(/[^0-9.]/g,""))):va.localeCompare(vb);
+return dir==="asc"?cmp:-cmp;
+});
+rows.forEach(function(r){body.appendChild(r);});
+});
+});
+});
 var btn=document.getElementById("recalc");
 if(btn){btn.addEventListener("click",function(){
 btn.disabled=true;btn.textContent="Checking...";
