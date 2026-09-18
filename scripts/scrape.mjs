@@ -17,7 +17,9 @@ const CONFIG = {
     deepSWE: "https://deepswe.datacurve.ai/",
     intelligenceIndex: "https://artificialanalysis.ai/leaderboards/models",
     openRouter: "https://openrouter.ai/api/v1/models",
+    designArena: "https://www.designarena.ai/api/leaderboard",
   },
+  designArenaBody: { arenaType: "agents", category: "agon_webapps", variationName: "public", inputModality: "text" },
 };
 
 const round = (n, digits = 2) => Number(Number(n).toFixed(digits));
@@ -76,8 +78,19 @@ function findOpenRouterModel(modelName, openRouterModels) {
     ["grok-4.6", "x-ai/grok-4.6"],
     ["kimi-k3", "moonshotai/kimi-k3"],
     ["qwen3.8-flash-next", "qwen/qwen3.8-flash-next"],
-    ["qwen3.8-max", "qwen/qwen3.8-max"],
-    ["qwen3.8", "qwen/qwen3.8"],
+    ["qwen3.8-max", "qwen/qwen3.8-max-0902"],
+    ["qwen3.8", "qwen/qwen3.8-max-0902"],
+    ["minimax-m3", "minimax/minimax-m3"],
+    ["gpt-5.6-sol-xhigh", "openai/gpt-5.6-sol"],
+    ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
+    ["muse-spark-1.3", "meta/muse-spark-1.3"],
+    ["kimi-k2.7-code", "moonshotai/kimi-k2.7-code"],
+    ["qwen3.7-max", "qwen/qwen3.7-max"],
+    ["camellia", null],
+    ["solar-pro4-direct", null],
+    ["yoda", null],
+    ["evergreen", null],
+    ["grogu", null],
     ["deepseek-v4-pro", "deepseek/deepseek-v4-pro"],
     ["muse-spark", "meta/muse-spark"],
   ];
@@ -104,6 +117,36 @@ function effortIsSupported(candidate, openRouterModel) {
       openRouterModel.supportedParameters.includes("reasoning_effort");
   }
   return efforts.includes(candidate.effort);
+}
+
+async function scrapeDesignArena() {
+  // Design Arena agentic Web App board (Frontend tab = agon_webapps).
+  // Plain fetch works: POST JSON to their public leaderboard API.
+  const response = await fetch(CONFIG.urls.designArena, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(CONFIG.designArenaBody),
+  });
+  if (!response.ok) throw new Error(`Design Arena HTTP ${response.status}`);
+  const json = await response.json();
+  if (!json.success || !Array.isArray(json.data) || !json.data.length) {
+    throw new Error("Design Arena returned no board data");
+  }
+  const elos = json.data.map((r) => Number(r.elo));
+  const lo = Math.min(...elos), hi = Math.max(...elos);
+  return json.data
+    .filter((r) => Number.isFinite(Number(r.elo)) && Number(r.battles) >= 500)
+    .map((r) => ({
+      rawName: `design-arena:${r.modelId}`,
+      model: r.modelId,
+      effort: null,
+      // min-max normalize Elo across this board to 0-100
+      score: hi > lo ? round(((Number(r.elo) - lo) / (hi - lo)) * 100, 1) : 50,
+      elo: round(Number(r.elo), 1),
+      battles: Number(r.battles),
+      winRate: Number(r.winRate),
+      costPerTask: null, // filled from OpenRouter blended pricing below
+    }));
 }
 
 async function scrapeDeepSWE(browser) {
@@ -175,8 +218,60 @@ async function scrapeIntelligenceIndex(browser) {
 function attachOpenRouter(results, openRouterModels) {
   return results.map((candidate) => {
     const openRouter = findOpenRouterModel(candidate.model, openRouterModels);
-    return { ...candidate, openRouterId: openRouter?.id ?? null, effortSupported: effortIsSupported(candidate, openRouter) };
+    const out = { ...candidate, openRouterId: openRouter?.id ?? null, effortSupported: effortIsSupported(candidate, openRouter) };
+    if (openRouter) {
+      out.orPromptPerMillion = openRouter.promptPerMillion;
+      out.orCompletionPerMillion = openRouter.completionPerMillion;
+    }
+    return out;
   }).filter((c) => c.openRouterId && c.effortSupported);
+}
+
+// Blend rule (locked): per canonical model (openRouterId + effort), if both
+// DeepSWE and Design Arena scores present -> 50/50; only one -> use it at 100%.
+// Design Arena entries carry effort=null and costPerTask=null; they inherit
+// effort + cost from their DeepSWE counterpart when one exists, else effort
+// stays null and cost is estimated from OpenRouter blended pricing.
+function blendCodingScores(deepSWEPool, designArenaPool) {
+  const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null }
+  for (const d of deepSWEPool) {
+    let g = byKey.get(d.openRouterId);
+    if (!g) { g = { efforts: new Map(), design: null }; byKey.set(d.openRouterId, g); }
+    g.efforts.set(d.effort ?? "default", d);
+  }
+  for (const z of designArenaPool) {
+    let g = byKey.get(z.openRouterId);
+    if (!g) { g = { efforts: new Map(), design: null }; byKey.set(z.openRouterId, g); }
+    g.design = z;
+  }
+  const blended = [];
+  for (const [, g] of byKey) {
+    if (g.efforts.size) {
+      for (const [, d] of g.efforts) {
+        if (g.design) {
+          blended.push({
+            ...d,
+            score: round((d.score + g.design.score) / 2, 1),
+            sources: "50% DeepSWE + 50% Design Arena Full-Stack",
+            deepScore: d.score, designScore: g.design.score, designElo: g.design.elo,
+          });
+        } else {
+          blended.push({ ...d, sources: "DeepSWE only - no Design Arena data yet", deepScore: d.score, designScore: null, designElo: null });
+        }
+      }
+    } else if (g.design) {
+      // Design-only model: no DeepSWE effort/cost; estimate cost/task from
+      // OpenRouter blended price at a nominal 20k completion + 5k prompt tokens.
+      const z = g.design;
+      const prompt = z.orPromptPerMillion ?? 0, completion = z.orCompletionPerMillion ?? 0;
+      const estCost = round((prompt * 5000 + completion * 20000) / 1_000_000, 2);
+      blended.push({
+        ...z, effort: null, costPerTask: estCost,
+        sources: "Design Arena only - no DeepSWE data yet", deepScore: null, designScore: z.score, designElo: z.elo,
+      });
+    }
+  }
+  return blended;
 }
 
 function pickCheapestAbove(candidates, cutoff) {
@@ -189,6 +284,14 @@ function pickCheapestAbove(candidates, cutoff) {
 async function main() {
   console.log("Fetching OpenRouter...");
   const openRouterModels = await getOpenRouterModels();
+  console.log("Fetching Design Arena...");
+  let designArenaRaw = [];
+  try {
+    designArenaRaw = await scrapeDesignArena();
+    console.log(`Design Arena: ${designArenaRaw.length} models`);
+  } catch (error) {
+    console.warn("Design Arena fetch failed, continuing DeepSWE-only:", error.message);
+  }
   console.log("Launching browser...");
   const browser = await chromium.launch({ headless: true });
   let deepSWERaw, intelligenceRaw;
@@ -201,7 +304,9 @@ async function main() {
     await browser.close();
   }
 
-  const coding = attachOpenRouter(deepSWERaw, openRouterModels);
+  const deepSWEPool = attachOpenRouter(deepSWERaw, openRouterModels);
+  const designPool = attachOpenRouter(designArenaRaw, openRouterModels);
+  const coding = blendCodingScores(deepSWEPool, designPool);
   const agentPool = attachOpenRouter(intelligenceRaw, openRouterModels);
 
   // Agent frontier: best score among reasonably priced (<= $3/task), per selector discipline
@@ -220,6 +325,8 @@ async function main() {
     confidence: x.confidence ?? null, costPerTask: x.costPerTask,
     outputTokens: x.outputTokens ?? null, steps: x.steps ?? null,
     speed: x.speed ?? null, openRouterId: x.openRouterId,
+    sources: x.sources ?? null, deepScore: x.deepScore ?? null,
+    designScore: x.designScore ?? null, designElo: x.designElo ?? null,
   });
 
   const agentElig = pickCheapestAbove(agentPool, agentCutoff);

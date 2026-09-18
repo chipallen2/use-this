@@ -45,6 +45,15 @@ function displayName(id) {
 
 const effortLabel = (e) => (e ? `${e} thinking` : "default");
 
+// Short label for the blend-source column in coding tables.
+function shortSource(s) {
+  if (!s) return "";
+  if (s.startsWith("50% DeepSWE")) return "blend";
+  if (s.startsWith("Design Arena only")) return "Design only";
+  if (s.startsWith("DeepSWE only")) return "DeepSWE only";
+  return s;
+}
+
 function cardClass(key) { return key === "agent" ? "chat" : key === "everyday" ? "everyday" : "hard"; }
 function cardTitle(key) { return key === "agent" ? "Chatting" : key === "everyday" ? "Everyday Coding" : "Crazy Hard Coding"; }
 function cardExpl(key) {
@@ -204,11 +213,14 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const cutoff = picks[key].cutoff;
   const [l1, l2] = displayName(w.openRouterId);
   const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
+  const hasSources = list.some((p) => p.sources);
   const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
     const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
     const [n1, n2] = displayName(p.openRouterId);
-    return `<tr${isWin ? ' class="win"' : ""}><td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td><td>${esc(p.effort || "default")}</td><td>${p.score}%</td><td>$${p.costPerTask}</td></tr>`;
+    const src = hasSources ? `<td>${esc(shortSource(p.sources))}</td>` : "";
+    return `<tr${isWin ? ' class="win"' : ""}><td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td><td>${esc(p.effort || "default")}</td><td>${p.score}%</td><td>$${p.costPerTask}</td>${src}</tr>`;
   }).join("");
+  const srcHead = hasSources ? "<th>Signal</th>" : "";
   return `<div class="modal" id="modal-${key}" aria-hidden="true"><div class="modal-card ${color}" role="dialog" aria-label="${cardTitle(key)} detail">
 <button class="close" data-close="${key}" aria-label="Close">&times;</button>
 <p class="kicker">${cardTitle(key)} - detail</p>
@@ -218,8 +230,8 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
-<p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.</p>
-<table class="sortable"><caption>All contenders</caption><thead><tr><th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th></tr></thead><tbody>${rows}</tbody></table>
+<p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (Elo min-max normalized); models missing one signal use the other at 100%."}</p>
+<table class="sortable"><caption>All contenders</caption><thead><tr><th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>${srcHead}</tr></thead><tbody>${rows}</tbody></table>
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
@@ -241,8 +253,8 @@ function card(key, color) {
 
 const why = {
   agent: `Cheapest chat model clearing 90% of frontier quality at $${picks.agent.winner.costPerTask}/task.`,
-  everyday: `Cheapest model clearing 90% of frontier DeepSWE quality at $${picks.everyday.winner.costPerTask}/task.`,
-  hard: `Cheapest model clearing 97% of frontier DeepSWE quality at $${picks.hard.winner.costPerTask}/task. Frontier quality without the frontier bill.`,
+  everyday: `Cheapest model clearing 90% of frontier blended coding quality at $${picks.everyday.winner.costPerTask}/task. Score = ${esc(picks.everyday.winner.sources || "50% DeepSWE + 50% Design Arena Full-Stack")}.`,
+  hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "50% DeepSWE + 50% Design Arena Full-Stack")}. Frontier quality without the frontier bill.`,
 };
 
 const html = `<!DOCTYPE html>
@@ -324,10 +336,10 @@ ${card("agent", "chat")}
 ${card("everyday", "everyday")}
 ${card("hard", "hard")}
 </main>
-<footer>Updated ${esc(dateStr)} - scores: AA Intelligence Index (chat), DeepSWE v1.1 (coding)</footer>
+<footer>Updated ${esc(dateStr)} - scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Full-Stack (coding)</footer>
 ${modal("agent", "chat", "AA Intelligence Index", 90, why.agent)}
-${modal("everyday", "everyday", "DeepSWE v1.1", 90, why.everyday)}
-${modal("hard", "hard", "DeepSWE v1.1", 97, why.hard)}
+${modal("everyday", "everyday", "DeepSWE + Design Arena", 90, why.everyday)}
+${modal("hard", "hard", "DeepSWE + Design Arena", 97, why.hard)}
 <script>
 (function(){
 function open(key){var m=document.getElementById("modal-"+key);if(m){m.classList.add("open");m.setAttribute("aria-hidden","false");}}
