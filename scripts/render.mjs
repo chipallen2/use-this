@@ -15,6 +15,19 @@ const cands = JSON.parse(readFileSync(`${DATA}/candidates.json`, "utf8"));
 
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+// Benchmark source links (footer + popup explain text). Applied AFTER esc().
+const AA_URL = "https://artificialanalysis.ai/leaderboards/models";
+const DEEPSWE_URL = "https://deepswe.datacurve.ai/";
+const DESIGN_URL = "https://www.designarena.ai/leaderboard?section=agentic-web-dev";
+const blink = (url, text) => `<a href="${url}" target="_blank" rel="noopener">${text}</a>`;
+function linkify(s) {
+  return String(s)
+    .replace(/AA Intelligence Index/g, blink(AA_URL, "AA Intelligence Index"))
+    .replace(/Artificial Analysis/g, blink(AA_URL, "Artificial Analysis"))
+    .replace(/Design Arena/g, blink(DESIGN_URL, "Design Arena"))
+    .replace(/DeepSWE/g, blink(DEEPSWE_URL, "DeepSWE"));
+}
+
 // Short display name from OpenRouter ID, e.g. openai/gpt-5.6-luna-pro -> ["GPT-5.6", "Luna Pro"]
 function displayName(id) {
   const slug = id.split("/").pop();
@@ -273,15 +286,15 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 <button class="close" data-close="${key}" aria-label="Close">&times;</button>
 <p class="kicker">${cardTitle(key)} - detail</p>
 <p class="winner"><span class="use">Use this</span><span class="name">${esc(l1 + (l2 ? " " + l2 : ""))}</span><span class="think">${esc(effortLabel(w.effort))}</span></p>
-<p class="why">${whyText}</p>
+<p class="why">${linkify(whyText)}</p>
 <div class="chart-box"><h2>Quality vs cost</h2><p class="sub">Left = cheaper. Up = better ${esc(benchLabel)} score. Hover or tap any dot for details.</p>
 <button class="yrange" type="button" data-mode="zoom">View All</button>
 ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
-<p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized to 0-100); models missing one signal use the other at 100%."}</p>
+<p class="explain"><strong>Score = ${linkify(esc(benchLabel))},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : linkify(" Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized to 0-100); models missing one signal use the other at 100%.")}</p>
 <table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
-${isCoding ? '<p class="norm-note">* Both signals min-max normalized to 0-100 for blending. DeepSWE shows raw test %; Design shows raw Elo.</p>' : ""}
+${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 0-100 for blending. DeepSWE shows raw test %; Design shows raw Elo.</p>') : ""}
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
@@ -313,7 +326,7 @@ const html = `<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#2345ff">
-<title>USE THIS - Today's Best Model</title>
+<title>Use This Model - Today's Best Model</title>
 <style>
 *{box-sizing:border-box}
 html{min-height:100%}
@@ -336,6 +349,7 @@ h3 .thinking{position:absolute;top:12px;left:0;display:inline-flex;align-items:c
 .tap{margin:14px 0 0;font-size:13px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;opacity:.85}
 .hard .tap{opacity:1}
 footer{padding-top:20px;text-align:center;font-size:12px;line-height:1.4}
+footer a,.explain a,.why a,.norm-note a{color:inherit}
 .modal{display:none;position:fixed;inset:0;background:rgba(10,10,40,.72);z-index:50;overflow-y:auto;padding:clamp(12px,3vw,40px)}
 .modal.open{display:block}
 .modal-card{max-width:920px;margin:0 auto;border-radius:24px;padding:clamp(24px,3vw,44px);position:relative;background:#ff795e;color:#141414}
@@ -377,7 +391,7 @@ tr.below td{opacity:.55}
 </head>
 <body>
 <header>
-<h1>TODAY'S BEST MODEL</h1>
+<h1>USE THIS MODEL</h1>
 <p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
 <div class="pick-date">
 <time datetime="${picks.date}">Picks for ${esc(dateStr)}</time>
@@ -389,7 +403,7 @@ ${card("agent", "chat")}
 ${card("everyday", "everyday")}
 ${card("hard", "hard")}
 </main>
-<footer>Updated ${esc(dateStr)} - scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Full-Stack (coding)</footer>
+<footer>Updated ${esc(dateStr)} - ${linkify("scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Full-Stack (coding)")}</footer>
 ${modal("agent", "chat", "AA Intelligence Index", 90, why.agent)}
 ${modal("everyday", "everyday", "DeepSWE + Design Arena", 90, why.everyday)}
 ${modal("hard", "hard", "DeepSWE + Design Arena", 97, why.hard)}
