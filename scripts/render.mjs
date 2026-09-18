@@ -1,4 +1,4 @@
-// scripts/render.mjs — builds dist/index.html from data/picks.json + data/candidates.json
+// scripts/render.mjs -- builds dist/index.html from data/picks.json + data/candidates.json
 // Locked design: v4.html landing + popup.html detail. Inline CSS, inline SVG, tiny inline JS (modal only).
 // Usage: node scripts/render.mjs [datadir] [outpath]
 
@@ -29,6 +29,7 @@ function displayName(id) {
     [/^claude-opus-5.*$/, ["Claude", "Opus 5"]],
     [/^claude-fable-5.*$/, ["Claude", "Fable 5"]],
     [/^claude-sonnet-5.*$/, ["Claude", "Sonnet 5"]],
+    [/^gpt-5\.6-sol-pro$/, ["GPT-5.6", "Sol Pro"]],
     [/^gemini-3\.8-flash$/, ["Gemini 3.8", "Flash"]],
     [/^gemini-3\.7-flash$/, ["Gemini 3.7", "Flash"]],
     [/^muse-spark.*$/, ["Muse", "Spark"]],
@@ -52,60 +53,136 @@ function cardExpl(key) {
     : "Best money-no-object pick for really hard tasks";
 }
 
-// Inline SVG scatter: x = price (cheap on RIGHT), y = score. Top 8 by (score desc, price asc), winner highlighted.
-function scatter(list, winner, cutoff, color, benchLabel) {
-  const pts = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).slice(0, 8);
-  const W = 720, H = 470, L = 70, R = 695, T = 30, B = 380;
+// Org colors (AA-style legend)
+function orgOf(id) {
+  const o = id.split("/")[0].toLowerCase();
+  if (o === "openai") return "OpenAI";
+  if (o === "anthropic") return "Anthropic";
+  if (o === "google") return "Google";
+  if (o === "meta") return "Meta";
+  if (o === "x-ai") return "xAI";
+  if (o === "z-ai") return "Z.ai";
+  if (o === "moonshotai") return "Moonshot AI";
+  if (o === "deepseek") return "DeepSeek";
+  if (o === "alibaba" || o === "qwen") return "Alibaba";
+  return o;
+}
+const ORG_COLORS = {
+  "OpenAI": "#111111", "Anthropic": "#e8590c", "Google": "#2f9e44",
+  "Meta": "#1971c2", "xAI": "#7048e8", "Z.ai": "#0c8599",
+  "Moonshot AI": "#f08c00", "DeepSeek": "#0b7285", "Alibaba": "#d6336c",
+};
+const orgColor = (id) => ORG_COLORS[orgOf(id)] || "#868e96";
+
+// Nice round ticks within [lo, hi]
+function niceTicks(lo, hi, n) {
+  if (!(hi > lo)) return [lo];
+  const span = hi - lo, raw = span / n;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const norm = raw / mag;
+  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
+  const out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(4));
+  return out.length ? out : [lo, hi];
+}
+// Log-friendly $ ticks within [lo, hi]
+function moneyTicks(lo, hi) {
+  const cand = [0.25, 0.5, 1, 2, 5, 10, 15, 20, 30, 50];
+  const t = cand.filter((v) => v >= lo * 0.999 && v <= hi * 1.001);
+  if (t.length >= 2) return t;
+  return niceTicks(lo, hi, 5);
+}
+
+// Inline SVG scatter (AA/DeepSWE style): x = cost/task, CHEAP on LEFT; y = score.
+// Light grid, $ and % ticks, dots colored by org, all dots labeled + native
+// <title> tooltips, dashed CUTOFF line with shaded winning zone above it,
+// FRONTIER tag on the top scorer, USE THIS ring + callout on the winner.
+function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
+  const pts = [...list].sort((a, b) => a.costPerTask - b.costPerTask);
+  const W = 760, H = 480, L = 56, R = 740, T = 26, B = 392;
   const scores = pts.map((p) => p.score);
   const costs = pts.map((p) => p.costPerTask);
-  const sMin = Math.min(cutoff, ...scores), sMax = Math.max(...scores);
-  const cMin = Math.min(...costs), cMax = Math.max(...costs);
-  const padS = Math.max(0.5, (sMax - sMin) * 0.15);
-  const y = (s) => B - ((s - (sMin - padS)) / ((sMax + padS) - (sMin - padS))) * (B - T);
-  const logMin = Math.log10(Math.max(0.05, cMin * 0.8)), logMax = Math.log10(cMax * 1.15);
-  const x = (c) => R - ((Math.log10(Math.max(0.05, c)) - logMin) / Math.max(0.01, logMax - logMin)) * (R - L);
-  const yCut = y(cutoff);
-  const frontier = pts.reduce((a, b) => (b.score > a.score ? b : a));
-  const short = (p) => esc(`${displayName(p.openRouterId)[0]}${p.effort ? " " + p.effort : ""}`.slice(0, 18));
   const key = (p) => p.openRouterId + "|" + p.effort;
-  const cheapest = pts.reduce((a, b) => (b.costPerTask < a.costPerTask ? b : a));
-  const priciest = pts.reduce((a, b) => (b.costPerTask > a.costPerTask ? b : a));
-  const labeled = new Set([key(winner), key(frontier), key(cheapest), key(priciest)]);
-  let dots = "";
-  let below = false;
-  for (const p of pts) {
-    const isWin = key(p) === key(winner);
+  const frontier = pts.reduce((a, b) => (b.score > a.score || (b.score === a.score && b.costPerTask < a.costPerTask) ? b : a));
+  const yLo = Math.min(cutoff, ...scores), yHi = Math.max(...scores);
+  const yPad = Math.max(0.5, (yHi - yLo) * 0.2);
+  const yMin = yLo - yPad, yMax = yHi + yPad * 1.2;
+  const y = (s) => B - ((s - yMin) / (yMax - yMin)) * (B - T);
+  const cLo = Math.min(...costs), cHi = Math.max(...costs);
+  const logMin = Math.log10(Math.max(0.05, cLo * 0.85)), logMax = Math.log10(cHi * 1.12);
+  const x = (c) => L + ((Math.log10(Math.max(0.05, c)) - logMin) / Math.max(0.01, logMax - logMin)) * (R - L);
+  const yCut = y(cutoff);
+  const short = (p) => {
+    const [n1, n2] = displayName(p.openRouterId);
+    return (n1 + (n2 ? " " + n2 : "") + (p.effort ? " " + p.effort : "")).slice(0, 26);
+  };
+  // Gridlines + ticks
+  let grid = "";
+  // winning zone: above cutoff
+  grid += `<rect x="${L}" y="${T}" width="${R - L}" height="${Math.max(0, Math.round(yCut) - T)}" fill="#e9fbe8"/>`;
+  grid += `<text x="${R - 6}" y="${T + 16}" font-size="11" font-weight="700" fill="#2f9e44" text-anchor="end">Winning zone</text>`;
+  for (const t of niceTicks(yMin, yMax, 6)) {
+    const yy = Math.round(y(t));
+    grid += `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>`;
+    grid += `<text x="${L - 7}" y="${yy + 4}" font-size="11" fill="#495057" text-anchor="end">${t}%</text>`;
+  }
+  for (const t of moneyTicks(cLo, cHi)) {
+    const xx = Math.round(x(t));
+    grid += `<line x1="${xx}" y1="${T}" x2="${xx}" y2="${B}" stroke="#e9ecef" stroke-width="1"/>`;
+    grid += `<text x="${xx}" y="${B + 20}" font-size="11" fill="#495057" text-anchor="middle">$${t}</text>`;
+  }
+  // Cutoff line
+  const cut = `<line x1="${L}" y1="${Math.round(yCut)}" x2="${R}" y2="${Math.round(yCut)}" stroke="#e03131" stroke-width="2" stroke-dasharray="8 6"/>` +
+    `<text x="${R - 4}" y="${Math.round(yCut) - 7}" font-size="12" font-weight="900" fill="#e03131" text-anchor="end">CUTOFF ${cutoff}% (${thresholdPct}% of frontier)</text>`;
+  // Dots + labels with simple collision stagger
+  let dots = "", labels = "";
+  const placed = [];
+  const keyWin = key(winner), keyFront = key(frontier);
+  const ordered = [...pts].sort((a, b) => x(a.costPerTask) - x(b.costPerTask));
+  for (const p of ordered) {
+    const isWin = key(p) === keyWin;
     const cx = Math.round(x(p.costPerTask)), cy = Math.round(y(p.score));
+    const c = orgColor(p.openRouterId);
+    const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isWin ? " - USE THIS" : "");
     if (isWin) {
-      dots += `<circle cx="${cx}" cy="${cy}" r="14" fill="#2345ff" stroke="#141414" stroke-width="3"/>`;
-      dots += `<text x="${cx}" y="${cy - 24}" font-size="13" font-weight="900" fill="#2345ff" text-anchor="middle">USE THIS</text>`;
-      dots += `<text x="${cx}" y="${cy + 34}" font-size="11" font-weight="900" fill="#2345ff" text-anchor="middle">${short(p)}</text>`;
+      dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4"><title>${esc(tip)}</title></circle>`;
+      labels += `<text x="${cx}" y="${cy - 22}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">USE THIS &#9733;</text>`;
+      labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle">${esc(short(p))}</text>`;
+      placed.push({ x: cx, row: 1 }, { x: cx, row: -1 });
     } else {
-      dots += `<circle cx="${cx}" cy="${cy}" r="10" fill="#141414"/>`;
-      if (labeled.has(key(p))) {
-        below = !below;
-        const ly = below ? cy + 26 : cy - 20;
-        dots += `<text x="${cx}" y="${ly}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle">${short(p)}</text>`;
-      }
+      dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}"><title>${esc(tip)}</title></circle>`;
+      // alternate above/below, flip if too close to last label on that row
+      let row = placed.length % 2 === 0 ? 1 : -1;
+      const tooClose = (r) => placed.some((q) => q.row === r && Math.abs(q.x - cx) < 62);
+      if (tooClose(row)) row = -row;
+      if (tooClose(row)) row = 0; // give up staggering, put further above
+      const ly = row === 1 ? cy - 14 : row === -1 ? cy + 24 : cy - 26;
+      labels += `<text x="${cx}" y="${ly}" font-size="10" font-weight="700" fill="#343a40" text-anchor="middle">${esc(short(p))}</text>`;
+      placed.push({ x: cx, row });
     }
   }
   const fx = Math.round(x(frontier.costPerTask)), fy = Math.round(y(frontier.score));
-  const fl = fy - 30 < 24 ? fy + 44 : fy - 30;
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Scatter chart of price versus ${esc(benchLabel)} score">
-<line x1="${L}" y1="${T}" x2="${L}" y2="${B}" stroke="#141414" stroke-width="3"/>
-<line x1="${L}" y1="${B}" x2="${R}" y2="${B}" stroke="#141414" stroke-width="3"/>
-<line x1="${L}" y1="${yCut}" x2="${R}" y2="${yCut}" stroke="#141414" stroke-width="2.5" stroke-dasharray="9 7"/>
-<text x="600" y="${Math.round(yCut) - 8}" font-size="13" font-weight="900" fill="#141414">CUTOFF</text>
-<text x="${L}" y="${Math.round(y(sMax)) - 8}" font-size="12" font-weight="700" fill="#141414">${sMax}%</text>
-<text x="${L}" y="${Math.round(yCut) + 18}" font-size="12" font-weight="700" fill="#141414">${cutoff}%</text>
-<text x="16" y="210" font-size="13" font-weight="900" fill="#141414" transform="rotate(-90 16 210)">${esc(benchLabel)} score</text>
-<text x="${L}" y="402" font-size="12" font-weight="900" fill="#141414">$${cMax} EXPENSIVE</text>
-<text x="560" y="402" font-size="12" font-weight="900" fill="#141414">CHEAPEST $ &#8594;</text>
-<text x="250" y="428" font-size="13" font-weight="900" fill="#141414">price per task (cheapest on RIGHT)</text>
-<text x="120" y="${fl}" font-size="14" font-weight="900" fill="#141414">FRONTIER</text>
-<line x1="150" y1="${fl + 4}" x2="${fx + 14}" y2="${fy - 14}" stroke="#141414" stroke-width="2.5"/>
+  const fl = fy + 52 > B ? fy - 48 : fy + 52;
+  const frontTag = keyFront === keyWin ?
+    `<text x="${Math.min(fx + 8, R - 120)}" y="${fl}" font-size="12" font-weight="900" fill="#141414" text-anchor="start">FRONTIER ${frontier.score}% = USE THIS &#9733;</text>` +
+    `<line x1="${Math.min(fx + 8, R - 120)}" y1="${fl - 5}" x2="${fx}" y2="${fy - 14}" stroke="#141414" stroke-width="1.5"/>` :
+    `<text x="${Math.min(fx + 8, R - 120)}" y="${fl}" font-size="12" font-weight="900" fill="#141414" text-anchor="start">FRONTIER ${frontier.score}% (best score)</text>` +
+    `<line x1="${Math.min(fx + 8, R - 120)}" y1="${fl - 5}" x2="${fx}" y2="${fy - 14}" stroke="#141414" stroke-width="1.5"/>`;
+  const orgs = [...new Set(pts.map((p) => orgOf(p.openRouterId)))];
+  const legend = '<div class="legend">' + orgs.map((o) => '<span><i style="background:' + (ORG_COLORS[o] || "#868e96") + '"></i>' + esc(o) + '</span>').join("") + '</div>';
+  return { legend, svg: `<svg viewBox="0 0 ${W} ${H + 40}" role="img" aria-label="Scatter chart of cost per task versus ${esc(benchLabel)} score">
+${grid}
+<line x1="${L}" y1="${T}" x2="${L}" y2="${B}" stroke="#adb5bd" stroke-width="1"/>
+<line x1="${L}" y1="${B}" x2="${R}" y2="${B}" stroke="#adb5bd" stroke-width="1"/>
+${cut}
 ${dots}
-</svg>`;
+${labels}
+${frontTag}
+<text x="${L}" y="${B + 38}" font-size="12" font-weight="700" fill="#495057">&#8592; Cheaper</text>
+<text x="${R}" y="${B + 38}" font-size="12" font-weight="700" fill="#495057" text-anchor="end">Pricier &#8594;</text>
+<text x="${(L + R) / 2}" y="${B + 38}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">Cost per task ($)</text>
+<text x="14" y="210" font-size="12" font-weight="700" fill="#495057" transform="rotate(-90 14 210)" text-anchor="middle">${esc(benchLabel)} score (%)</text>
+</svg>` };
 }
 
 function modal(key, color, benchLabel, thresholdPct, whyText) {
@@ -113,6 +190,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const list = cands[key];
   const cutoff = picks[key].cutoff;
   const [l1, l2] = displayName(w.openRouterId);
+  const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
   const rows = [...list].sort((a, b) => a.costPerTask - b.costPerTask).map((p) => {
     const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
     const [n1, n2] = displayName(p.openRouterId);
@@ -123,8 +201,9 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 <p class="kicker">${cardTitle(key)} - detail</p>
 <p class="winner"><span class="use">Use this</span><span class="name">${esc(l1 + (l2 ? " " + l2 : ""))}</span><span class="think">${esc(effortLabel(w.effort))}</span></p>
 <p class="why">${whyText}</p>
-<div class="chart-box"><h2>Price vs quality</h2><p class="sub">Right = cheaper. Up = better ${esc(benchLabel)} score.</p>
-${scatter(list, w, cutoff, color, benchLabel)}
+<div class="chart-box"><h2>Quality vs cost</h2><p class="sub">Left = cheaper. Up = better ${esc(benchLabel)} score. Hover any dot for details.</p>
+${ch.legend}
+${ch.svg}
 <p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.</p>
 <table><caption>All contenders</caption><tr><th>Model</th><th>Thinking</th><th>Score</th><th>Price/task</th></tr>${rows}</table>
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
@@ -195,6 +274,8 @@ footer{padding-top:20px;text-align:center;font-size:12px;line-height:1.4}
 .chart-box{margin-top:24px;background:#fff;border-radius:16px;padding:clamp(14px,2vw,24px);color:#141414}
 .chart-box h2{margin:0 0 4px;font-size:15px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
 .chart-box .sub{margin:0 0 12px;font-size:13px;font-weight:700}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:2px 0 8px;font-size:12px;font-weight:700;color:#343a40}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:baseline}
 svg{width:100%;height:auto;display:block}
 .explain{margin:16px 0 0;font-size:clamp(14px,1.5vw,17px);line-height:1.5;max-width:60em}
 table{width:100%;margin-top:20px;border-collapse:collapse;font-size:14px;background:#fff;color:#141414;border-radius:16px;overflow:hidden}
