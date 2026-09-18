@@ -32,6 +32,7 @@ function displayName(id) {
     [/^gpt-5\.6-sol-pro$/, ["GPT-5.6", "Sol Pro"]],
     [/^gemini-3\.8-flash$/, ["Gemini 3.8", "Flash"]],
     [/^gemini-3\.7-flash$/, ["Gemini 3.7", "Flash"]],
+    [/^muse-spark-1\.3.*$/, ["Muse Spark 1.3", ""]],
     [/^muse-spark.*$/, ["Muse", "Spark"]],
     [/^glm-5\.3-flash$/, ["GLM-5.3", "Flash"]],
     [/^glm-5\.3$/, ["GLM-5.3", ""]],
