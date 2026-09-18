@@ -120,7 +120,6 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
   let grid = "";
   // winning zone: above cutoff
   grid += `<rect x="${L}" y="${T}" width="${R - L}" height="${Math.max(0, Math.round(yCut) - T)}" fill="#e9fbe8"/>`;
-  grid += `<text x="${R - 6}" y="${T + 16}" font-size="11" font-weight="700" fill="#2f9e44" text-anchor="end">Winning zone</text>`;
   for (const t of niceTicks(yMin, yMax, 6)) {
     const yy = Math.round(y(t));
     grid += `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>`;
@@ -147,9 +146,15 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
     const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "");
     if (isWin) {
       dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" ${dat}><title>${esc(tip)}</title></circle>`;
-      const winLabel = key(p) === keyFront ? `USE THIS &#9733; · FRONTIER ${frontier.score}%` : "USE THIS &#9733;";
-      const lx = Math.max(105, Math.min(cx, R - 105));
-      labels += `<text x="${lx}" y="${cy - 22}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">${winLabel}</text>`;
+      // USE THIS badge: same pill-beside-dot language as FRONTIER, but dominant -
+      // card-accent fill, larger pill, star kept. Merged when winner == frontier.
+      const accent = color === "chat" ? ["#c5ff32", "#141414"] : color === "everyday" ? ["#ff795e", "#141414"] : ["#7926ec", "#fff"];
+      const winLabel = key(p) === keyFront ? "★ USE THIS \u00b7 FRONTIER " + frontier.score + "%" : "★ USE THIS";
+      const wbw = Math.round(winLabel.length * 8.2 + 26);
+      let wbx = cx + 20;
+      if (wbx + wbw > R) wbx = cx - 20 - wbw;
+      if (wbx < L) wbx = L;
+      labels += `<g><rect x="${wbx}" y="${cy - 13}" width="${wbw}" height="26" rx="13" fill="${accent[0]}" stroke="#141414" stroke-width="2"/><text x="${wbx + wbw / 2}" y="${cy + 5}" font-size="13" font-weight="900" fill="${accent[1]}" text-anchor="middle">${esc(winLabel)}</text></g>`;
       labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle">${esc(short(p))}</text>`;
       placed.push({ x: cx, row: 1 }, { x: cx, row: -1 });
     } else {
@@ -166,7 +171,7 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
   }
   const fx = Math.round(x(frontier.costPerTask)), fy = Math.round(y(frontier.score));
   // FRONTIER badge: small dark pill directly beside the frontier dot, no leader line.
-  // (When frontier == winner the label merges into the USE THIS tag above the dot.)
+  // (When frontier == winner the label merges into the USE THIS pill beside the dot.)
   let frontTag = "";
   if (keyFront !== keyWin) {
     const fLabel = `FRONTIER ${frontier.score}%`;
