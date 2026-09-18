@@ -216,15 +216,21 @@ async function scrapeIntelligenceIndex(browser) {
 }
 
 function attachOpenRouter(results, openRouterModels) {
-  return results.map((candidate) => {
+  // Dedupe on canonical key (openRouterId + effort), keeping the best score -
+  // the AA board can list the same model twice (e.g. duplicate rows).
+  const best = new Map();
+  for (const candidate of results) {
     const openRouter = findOpenRouterModel(candidate.model, openRouterModels);
     const out = { ...candidate, openRouterId: openRouter?.id ?? null, effortSupported: effortIsSupported(candidate, openRouter) };
     if (openRouter) {
       out.orPromptPerMillion = openRouter.promptPerMillion;
       out.orCompletionPerMillion = openRouter.completionPerMillion;
     }
-    return out;
-  }).filter((c) => c.openRouterId && c.effortSupported);
+    if (!out.openRouterId || !out.effortSupported) continue;
+    const k = out.openRouterId + "|" + (out.effort ?? "default");
+    if (!best.has(k) || out.score > best.get(k).score) best.set(k, out);
+  }
+  return [...best.values()];
 }
 
 // Blend rule (locked): per canonical model (openRouterId + effort), if both
@@ -341,9 +347,10 @@ async function main() {
   };
   const candidates = {
     date: picks.date,
-    agent: agentElig.map((x) => slim(x, agentBest)),
-    everyday: everydayElig.map((x) => slim(x, codingBest)),
-    hard: hardElig.map((x) => slim(x, codingBest)),
+    // Full pools (not just above-cutoff): render dims below-cutoff but keeps them visible.
+    agent: agentPool.map((x) => slim(x, agentBest)),
+    everyday: coding.map((x) => slim(x, codingBest)),
+    hard: coding.map((x) => slim(x, codingBest)),
   };
 
   mkdirSync(OUT, { recursive: true });

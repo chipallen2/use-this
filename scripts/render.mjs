@@ -142,17 +142,22 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
   // Cutoff line
   const cut = `<line x1="${L}" y1="${Math.round(yCut)}" x2="${R}" y2="${Math.round(yCut)}" stroke="#e03131" stroke-width="2" stroke-dasharray="8 6"/>` +
     `<text x="${R - 4}" y="${Math.round(yCut) - 7}" font-size="12" font-weight="900" fill="#e03131" text-anchor="end">CUTOFF ${cutoff}% (${thresholdPct}% of frontier)</text>`;
-  // Dots + labels with simple collision stagger
+  // Dots + labels with simple collision stagger.
+  // Below-cutoff dots render dimmed (smaller, translucent gray) but stay
+  // tappable with full tooltips. Only above-cutoff dots get text labels,
+  // to avoid clutter.
   let dots = "", labels = "";
   const placed = [];
   const keyWin = key(winner), keyFront = key(frontier);
+  const above = (p) => p.score >= cutoff;
   const ordered = [...pts].sort((a, b) => x(a.costPerTask) - x(b.costPerTask));
   for (const p of ordered) {
     const isWin = key(p) === keyWin;
+    const isAbove = above(p);
     const cx = Math.round(x(p.costPerTask)), cy = Math.round(y(p.score));
-    const c = orgColor(p.openRouterId);
-    const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isWin ? " - USE THIS" : "");
-    const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "");
+    const c = isAbove ? orgColor(p.openRouterId) : "#adb5bd";
+    const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isAbove ? "" : " (below cutoff)") + (isWin ? " - USE THIS" : "");
+    const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "") + (isAbove ? "" : ` data-below="1"`);
     if (isWin) {
       dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" ${dat}><title>${esc(tip)}</title></circle>`;
       // USE THIS badge: same pill-beside-dot language as FRONTIER, but dominant -
@@ -166,7 +171,7 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
       labels += `<g><rect x="${wbx}" y="${cy - 13}" width="${wbw}" height="26" rx="13" fill="${accent[0]}" stroke="#141414" stroke-width="2"/><text x="${wbx + wbw / 2}" y="${cy + 5}" font-size="13" font-weight="900" fill="${accent[1]}" text-anchor="middle">${esc(winLabel)}</text></g>`;
       labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle">${esc(short(p))}</text>`;
       placed.push({ x: cx, row: 1 }, { x: cx, row: -1 });
-    } else {
+    } else if (isAbove) {
       dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}" ${dat}><title>${esc(tip)}</title></circle>`;
       // alternate above/below, flip if too close to last label on that row
       let row = placed.length % 2 === 0 ? 1 : -1;
@@ -176,6 +181,9 @@ function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
       const ly = row === 1 ? cy - 14 : row === -1 ? cy + 24 : cy - 26;
       labels += `<text x="${cx}" y="${ly}" font-size="10" font-weight="700" fill="#343a40" text-anchor="middle">${esc(short(p))}</text>`;
       placed.push({ x: cx, row });
+    } else {
+      // Below cutoff: dimmed, unlabeled, still tappable with full tooltip.
+      dots += `<circle cx="${cx}" cy="${cy}" r="4" fill="${c}" opacity="0.45" ${dat}><title>${esc(tip)}</title></circle>`;
     }
   }
   const fx = Math.round(x(frontier.costPerTask)), fy = Math.round(y(frontier.score));
@@ -221,6 +229,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const sortVal = (v) => v == null ? "" : String(v);
   const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
     const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
+    const below = p.score < cutoff;
     const [n1, n2] = displayName(p.openRouterId);
     const nameCell = `<td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td>`;
     const thinkCell = `<td>${esc(p.effort || "default")}</td>`;
@@ -234,7 +243,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
       headExtra = "";
     }
     void headExtra;
-    return `<tr${isWin ? ' class="win"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
+    return `<tr${isWin ? ' class="win"' : below ? ' class="below"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
   }).join("");
   const head = isCoding
     ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE</button></th><th><button type="button" data-col="4" data-type="num">Design</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
@@ -249,7 +258,7 @@ ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
 <p class="explain"><strong>Score = ${esc(benchLabel)},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : " Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (Elo min-max normalized); models missing one signal use the other at 100%."}</p>
-<table class="sortable"><caption>All contenders</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
+<table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 </div></div></div>`;
 }
@@ -333,6 +342,7 @@ svg circle.dot{cursor:pointer}
 .tip{position:absolute;z-index:5;max-width:230px;background:#141414;color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.35)}
 .tip strong{display:block;font-size:14px;margin-bottom:2px}
 tr.win td{background:#141414;color:#fff;font-weight:900}
+tr.below td{opacity:.55}
 .id-row{margin-top:16px;background:#141414;color:#fff;border-radius:14px;padding:14px 16px;font-size:14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
 .id-row code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;background:#2a2a2a;padding:8px 12px;border-radius:8px;word-break:break-all}
 .id-row .tag{font-size:12px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:#c5ff32}
