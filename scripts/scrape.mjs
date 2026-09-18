@@ -377,6 +377,21 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
   return blended;
 }
 
+// Dedupe each pool to one entry per model (openRouterId): keep the highest-
+// scoring entry per model, carrying that entry's own effort label and cost.
+// The AA board and DeepSWE list models at multiple thinking levels, which
+// otherwise renders as stacked near-identical dots (same price, ~same
+// score); the pick is per model, so chart + table + winner all use the
+// model's best variant.
+function dedupeByModel(pool) {
+  const best = new Map();
+  for (const x of pool) {
+    const k = x.openRouterId;
+    if (!best.has(k) || x.score > best.get(k).score) best.set(k, x);
+  }
+  return [...best.values()];
+}
+
 function pickCheapestAbove(candidates, cutoff) {
   const eligible = candidates.filter((x) => x.score >= cutoff)
     .sort((a, b) => a.costPerTask - b.costPerTask || b.score - a.score);
@@ -415,8 +430,8 @@ async function main() {
 
   const deepSWEPool = addContributorTwins(attachOpenRouter(deepSWERaw, openRouterModels), openRouterModels);
   const designPool = attachOpenRouter(designArenaRaw, openRouterModels);
-  const coding = addContributorTwins(blendCodingScores(deepSWEPool, designPool), openRouterModels);
-  const agentPool = addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels);
+  const coding = dedupeByModel(addContributorTwins(blendCodingScores(deepSWEPool, designPool), openRouterModels));
+  const agentPool = dedupeByModel(addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels));
 
   // Agent frontier: best score among reasonably priced (<= $3/task), per selector discipline
   const reasonablyPriced = agentPool.filter((x) => x.costPerTask <= 3);
