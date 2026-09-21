@@ -612,10 +612,7 @@ The full page exposes two WebMCP tools (spec: https://webmachinelearning.github.
 
 How to call:
 - Requires a WebMCP-capable browser (Chrome 146+ with WebMCP enabled).
-- Imperative: The page registers both tools via navigator.modelContext.registerTool - call them through the browser agent's modelContext.
-- Declarative: The Recalculate form carries toolname="recalculate_picks" - submitting it via the agent path fires SubmitEvent.agentInvoked.
-
-Recalculate guard: Recomputes are rate-limited server-side (12h window). If picks are already fresh the endpoint returns already-fresh instead of recomputing - this is normal, not an error.
+- Call them through the browser agent's \`modelContext\`.
 
 Fallback: Without a WebMCP browser, this llms.txt is the machine-readable source of truth - re-fetch it for fresh picks.
 `;
