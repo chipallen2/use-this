@@ -603,6 +603,21 @@ ${pickLine("hard", "Crazy Hard Coding")}
 ## Full page
 
 - [USE THIS MODEL - interactive charts, tables, detail popups](https://usethismodel.vercel.app/)
+
+## For agents
+
+The full page exposes two WebMCP tools (spec: https://webmachinelearning.github.io/webmcp/):
+- \`get_picks\`: Returns the 3 current picks as structured JSON (no args).
+- \`recalculate_picks\`: Triggers a fresh benchmark recompute (no args).
+
+How to call:
+- Requires a WebMCP-capable browser (Chrome 146+ with WebMCP enabled).
+- Imperative: The page registers both tools via navigator.modelContext.registerTool - call them through the browser agent's modelContext.
+- Declarative: The Recalculate form carries toolname="recalculate_picks" - submitting it via the agent path fires SubmitEvent.agentInvoked.
+
+Recalculate guard: Recomputes are rate-limited server-side (12h window). If picks are already fresh the endpoint returns already-fresh instead of recomputing - this is normal, not an error.
+
+Fallback: Without a WebMCP browser, this llms.txt is the machine-readable source of truth - re-fetch it for fresh picks.
 `;
 
 mkdirSync(dirname(OUT), { recursive: true });

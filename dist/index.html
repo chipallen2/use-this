@@ -76,7 +76,10 @@ tr.below td{opacity:.55}
 <p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
 <div class="pick-date">
 <time datetime="2026-09-21">Picks for September 21, 2026</time>
-<button class="recalculate" id="recalc" type="button">Recalculate for today</button>
+<!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
+<form id="recalc-form" method="POST" action="https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh or recalculation-started." toolautosubmit>
+<button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
+</form>
 </div>
 </header>
 <main aria-label="AI model recommendations">
@@ -280,10 +283,23 @@ tsvg.querySelectorAll(".ygrid-zoom").forEach(function(g){g.style.display=full?"n
 tsvg.querySelectorAll(".ygrid-full").forEach(function(g){g.style.display=full?"":"none";});
 });
 });
-var btn=document.getElementById("recalc");
-if(btn){btn.addEventListener("click",function(){
-btn.disabled=true;btn.textContent="Checking...";
-fetch("https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+// WebMCP imperative tools + declarative form hookup. Human UX unchanged:
+// the recalc form still POSTs the same endpoint; agents get structured tools.
+// Imperative API: document.modelContext.registerTool({name, description,
+// inputSchema, execute}) per https://webmachinelearning.github.io/webmcp/
+// Declarative API: toolname/tooldescription/toolautosubmit on the recalc
+// <form> per declarative-api-explainer.md in that repo.
+var RECALC_ENDPOINT="https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc";
+function collectPicks(){
+var out={};
+document.querySelectorAll("[data-webmcp-pick]").forEach(function(el){
+var k=el.getAttribute("data-webmcp-pick");
+out[k]={category:el.getAttribute("data-category"),model:el.getAttribute("data-model"),thinking:el.getAttribute("data-thinking"),pricePerTask:parseFloat(el.getAttribute("data-price")),qualityPct:parseFloat(el.getAttribute("data-quality")),openRouterId:el.getAttribute("data-openrouter-id")};
+});
+return out;
+}
+function doRecalc(){
+return fetch(RECALC_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
 .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
 .then(function(res){
 if(res.j&&res.j.recalculated)return "Recalculation started - fresh picks incoming, check back soon.";
