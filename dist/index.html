@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#2345ff">
+<meta name="description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
+<link rel="describedby" href="/llms.txt">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"ItemList","name":"USE THIS MODEL picks for 2026-09-21","itemListElement":[{"@type":"ListItem","position":1,"name":"Chatting: Muse Spark 1.3 Contributor","item":{"@type":"SoftwareApplication","applicationCategory":"Chatting","name":"Muse Spark 1.3 Contributor","additionalProperty":[{"@type":"PropertyValue","name":"thinking","value":"max"},{"@type":"PropertyValue","name":"pricePerTaskUSD","value":0.08},{"@type":"PropertyValue","name":"qualityPct","value":100},{"@type":"PropertyValue","name":"openRouterId","value":"meta/muse-spark-1.3-contributor"}]}},{"@type":"ListItem","position":2,"name":"Everyday Coding: Muse Spark 1.3 Contributor","item":{"@type":"SoftwareApplication","applicationCategory":"Everyday Coding","name":"Muse Spark 1.3 Contributor","additionalProperty":[{"@type":"PropertyValue","name":"thinking","value":"default"},{"@type":"PropertyValue","name":"pricePerTaskUSD","value":0.04},{"@type":"PropertyValue","name":"qualityPct","value":93},{"@type":"PropertyValue","name":"openRouterId","value":"meta/muse-spark-1.3-contributor"}]}},{"@type":"ListItem","position":3,"name":"Crazy Hard Coding: GPT-6 Astra","item":{"@type":"SoftwareApplication","applicationCategory":"Crazy Hard Coding","name":"GPT-6 Astra","additionalProperty":[{"@type":"PropertyValue","name":"thinking","value":"xhigh"},{"@type":"PropertyValue","name":"pricePerTaskUSD","value":6.52},{"@type":"PropertyValue","name":"qualityPct","value":100},{"@type":"PropertyValue","name":"openRouterId","value":"openai/gpt-6-astra"}]}}]}</script>
 <title>Use This Model - Today's Best Model</title>
 <style>
 *{box-sizing:border-box}
@@ -77,21 +80,24 @@ tr.below td{opacity:.55}
 </div>
 </header>
 <main aria-label="AI model recommendations">
-<article class="chat" data-open="agent" tabindex="0" role="button" aria-label="Chatting detail">
+<article class="chat" data-open="agent" tabindex="0" role="button" aria-label="Chatting detail"
+ data-webmcp-pick="agent" data-category="Chatting" data-model="Muse Spark 1.3 Contributor" data-thinking="max" data-price="0.08" data-quality="100" data-openrouter-id="meta/muse-spark-1.3-contributor">
 <h2>Chatting</h2>
 <p class="explanation">Best for everyday chats</p>
 <h3><span class="thinking">max thinking</span><span>Muse Spark 1.3</span><span>Contributor</span></h3>
 <p class="details"><span>Price <strong>$0.08</strong></span><span>Quality <strong>100%</strong></span></p>
 <p class="tap">Tap for detail &#8594;</p>
 </article>
-<article class="everyday" data-open="everyday" tabindex="0" role="button" aria-label="Everyday Coding detail">
+<article class="everyday" data-open="everyday" tabindex="0" role="button" aria-label="Everyday Coding detail"
+ data-webmcp-pick="everyday" data-category="Everyday Coding" data-model="Muse Spark 1.3 Contributor" data-thinking="default" data-price="0.04" data-quality="93" data-openrouter-id="meta/muse-spark-1.3-contributor">
 <h2>Everyday Coding</h2>
 <p class="explanation">Best for normal coding</p>
 <h3><span class="thinking">default</span><span>Muse Spark 1.3</span><span>Contributor</span></h3>
 <p class="details"><span>Price <strong>$0.04</strong></span><span>Quality <strong>93%</strong></span></p>
 <p class="tap">Tap for detail &#8594;</p>
 </article>
-<article class="hard" data-open="hard" tabindex="0" role="button" aria-label="Crazy Hard Coding detail">
+<article class="hard" data-open="hard" tabindex="0" role="button" aria-label="Crazy Hard Coding detail"
+ data-webmcp-pick="hard" data-category="Crazy Hard Coding" data-model="GPT-6 Astra" data-thinking="xhigh" data-price="6.52" data-quality="100" data-openrouter-id="openai/gpt-6-astra">
 <h2>Crazy Hard Coding</h2>
 <p class="explanation">Best money-no-object pick for really hard tasks</p>
 <h3><span class="thinking">xhigh thinking</span><span>GPT-6</span><span>Astra</span></h3>
@@ -280,10 +286,23 @@ btn.disabled=true;btn.textContent="Checking...";
 fetch("https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
 .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
 .then(function(res){
-if(res.j&&res.j.recalculated){btn.textContent="Fresh picks incoming - check back soon!";}
-else{btn.textContent="Already fresh ("+((res.j&&res.j.last_calc)||"today")+")."; }
-})
-.catch(function(){btn.textContent="Recalculate for today";btn.disabled=false;});
+if(res.j&&res.j.recalculated)return "Recalculation started - fresh picks incoming, check back soon.";
+return "Picks already fresh (last calc: "+((res.j&&res.j.last_calc)||"today")+").";
+});
+}
+if(document.modelContext&&document.modelContext.registerTool){
+try{
+document.modelContext.registerTool({name:"get_picks",description:"Returns the 3 current model picks (chatting, everyday coding, crazy hard coding) with model name, thinking level, price per task, quality score, and copy-paste OpenRouter ID.",inputSchema:{type:"object",properties:{}},execute:function(){return Promise.resolve(JSON.stringify(collectPicks()));}});
+document.modelContext.registerTool({name:"recalculate_picks",description:"Check whether today's picks are stale and trigger a fresh benchmark recompute.",inputSchema:{type:"object",properties:{}},execute:function(){return doRecalc();}});
+}catch(e){}
+}
+var recalcForm=document.getElementById("recalc-form");
+if(recalcForm){recalcForm.addEventListener("submit",function(ev){
+if(ev.agentInvoked&&ev.respondWith){ev.preventDefault();ev.respondWith(doRecalc());return;}
+ev.preventDefault();
+var btn=document.getElementById("recalc");
+if(btn){btn.disabled=true;btn.textContent="Checking...";}
+doRecalc().then(function(msg){if(btn)btn.textContent=msg;}).catch(function(){if(btn){btn.textContent="Recalculate for today";btn.disabled=false;}});
 });}
 })();
 </script>

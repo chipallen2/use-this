@@ -305,7 +305,10 @@ function card(key, color) {
   const w = picks[key].winner;
   const [l1, l2] = displayName(w.openRouterId);
   const quality = w.relative;
-  return `<article class="${color}" data-open="${key}" tabindex="0" role="button" aria-label="${cardTitle(key)} detail">
+  const full = `${l1}${l2 ? " " + l2 : ""}`;
+  // WebMCP machine-readable pick: agents consume data-* instead of scraping pixels.
+  return `<article class="${color}" data-open="${key}" tabindex="0" role="button" aria-label="${cardTitle(key)} detail"
+ data-webmcp-pick="${key}" data-category="${cardTitle(key)}" data-model="${esc(full)}" data-thinking="${esc(w.effort || "default")}" data-price="${w.costPerTask}" data-quality="${quality}" data-openrouter-id="${esc(w.openRouterId)}">
 <h2>${cardTitle(key)}</h2>
 <p class="explanation">${cardExpl(key)}</p>
 <h3><span class="thinking">${esc(effortLabel(w.effort))}</span><span>${esc(l1)}</span>${l2 ? `<span>${esc(l2)}</span>` : ""}</h3>
@@ -320,12 +323,46 @@ const why = {
   hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "50% DeepSWE + 50% Design Arena Full-Stack")}. Frontier quality without the frontier bill.`,
 };
 
-const html = `<!DOCTYPE html>
+// WebMCP structured data response: first application/ld+json block on the
+// page is the declarative form tool's response payload (per WebMCP draft:
+// navigating form tools return the target page's first ld+json block).
+const pickLD = (key, title) => {
+  const w = picks[key].winner;
+  const [l1, l2] = displayName(w.openRouterId);
+  return {
+    "@type": "ListItem",
+    position: key === "agent" ? 1 : key === "everyday" ? 2 : 3,
+    name: `${title}: ${l1}${l2 ? " " + l2 : ""}`,
+    item: {
+      "@type": "SoftwareApplication",
+      applicationCategory: title,
+      name: `${l1}${l2 ? " " + l2 : ""}`,
+      additionalProperty: [
+        { "@type": "PropertyValue", name: "thinking", value: w.effort || "default" },
+        { "@type": "PropertyValue", name: "pricePerTaskUSD", value: w.costPerTask },
+        { "@type": "PropertyValue", name: "qualityPct", value: w.relative },
+        { "@type": "PropertyValue", name: "openRouterId", value: w.openRouterId },
+      ],
+    },
+  };
+};
+const ld = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  name: `USE THIS MODEL picks for ${picks.date}`,
+  itemListElement: [pickLD("agent", "Chatting"), pickLD("everyday", "Everyday Coding"), pickLD("hard", "Crazy Hard Coding")],
+};
+const ldJson = JSON.stringify(ld).replace(/</g, "\\u003c");
+
+const htmlTemplate = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#2345ff">
+<meta name="description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
+<link rel="describedby" href="/llms.txt">
+<script type="application/ld+json">{LDJSON}</script>
 <title>Use This Model - Today's Best Model</title>
 <style>
 *{box-sizing:border-box}
@@ -395,7 +432,10 @@ tr.below td{opacity:.55}
 <p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
 <div class="pick-date">
 <time datetime="${picks.date}">Picks for ${esc(dateStr)}</time>
-<button class="recalculate" id="recalc" type="button">Recalculate for today</button>
+<!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
+<form id="recalc-form" method="POST" action="${RECALC_URL}" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh or recalculation-started." toolautosubmit>
+<button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
+</form>
 </div>
 </header>
 <main aria-label="AI model recommendations">
@@ -497,23 +537,77 @@ tsvg.querySelectorAll(".ygrid-zoom").forEach(function(g){g.style.display=full?"n
 tsvg.querySelectorAll(".ygrid-full").forEach(function(g){g.style.display=full?"":"none";});
 });
 });
-var btn=document.getElementById("recalc");
-if(btn){btn.addEventListener("click",function(){
-btn.disabled=true;btn.textContent="Checking...";
-fetch("${RECALC_URL}",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
+// WebMCP imperative tools + declarative form hookup. Human UX unchanged:
+// the recalc form still POSTs the same endpoint; agents get structured tools.
+// Imperative API: document.modelContext.registerTool({name, description,
+// inputSchema, execute}) per https://webmachinelearning.github.io/webmcp/
+// Declarative API: toolname/tooldescription/toolautosubmit on the recalc
+// <form> per declarative-api-explainer.md in that repo.
+var RECALC_ENDPOINT="${RECALC_URL}";
+function collectPicks(){
+var out={};
+document.querySelectorAll("[data-webmcp-pick]").forEach(function(el){
+var k=el.getAttribute("data-webmcp-pick");
+out[k]={category:el.getAttribute("data-category"),model:el.getAttribute("data-model"),thinking:el.getAttribute("data-thinking"),pricePerTask:parseFloat(el.getAttribute("data-price")),qualityPct:parseFloat(el.getAttribute("data-quality")),openRouterId:el.getAttribute("data-openrouter-id")};
+});
+return out;
+}
+function doRecalc(){
+return fetch(RECALC_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
 .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
 .then(function(res){
-if(res.j&&res.j.recalculated){btn.textContent="Fresh picks incoming - check back soon!";}
-else{btn.textContent="Already fresh ("+((res.j&&res.j.last_calc)||"today")+")."; }
-})
-.catch(function(){btn.textContent="Recalculate for today";btn.disabled=false;});
+if(res.j&&res.j.recalculated)return "Recalculation started - fresh picks incoming, check back soon.";
+return "Picks already fresh (last calc: "+((res.j&&res.j.last_calc)||"today")+").";
+});
+}
+if(document.modelContext&&document.modelContext.registerTool){
+try{
+document.modelContext.registerTool({name:"get_picks",description:"Returns the 3 current model picks (chatting, everyday coding, crazy hard coding) with model name, thinking level, price per task, quality score, and copy-paste OpenRouter ID.",inputSchema:{type:"object",properties:{}},execute:function(){return Promise.resolve(JSON.stringify(collectPicks()));}});
+document.modelContext.registerTool({name:"recalculate_picks",description:"Check whether today's picks are stale and trigger a fresh benchmark recompute.",inputSchema:{type:"object",properties:{}},execute:function(){return doRecalc();}});
+}catch(e){}
+}
+var recalcForm=document.getElementById("recalc-form");
+if(recalcForm){recalcForm.addEventListener("submit",function(ev){
+if(ev.agentInvoked&&ev.respondWith){ev.preventDefault();ev.respondWith(doRecalc());return;}
+ev.preventDefault();
+var btn=document.getElementById("recalc");
+if(btn){btn.disabled=true;btn.textContent="Checking...";}
+doRecalc().then(function(msg){if(btn)btn.textContent=msg;}).catch(function(){if(btn){btn.textContent="Recalculate for today";btn.disabled=false;}});
 });}
 })();
 </script>
 </body>
 </html>`;
 
+const html = htmlTemplate.split("{LDJSON}").join(ldJson);
+
+// ---- llms.txt (https://llmstxt.org/ spec v2: H1 + blockquote + H2 file lists) ----
+function pickLine(key, title) {
+  const w = picks[key].winner;
+  const [l1, l2] = displayName(w.openRouterId);
+  const full = `${l1}${l2 ? " " + l2 : ""}`;
+  return `- [${title}: ${full} (${effortLabel(w.effort)})](https://usethismodel.vercel.app/) - $${w.costPerTask}/task, quality ${w.relative}%, copy-paste OpenRouter ID: \`${w.openRouterId}\``;
+}
+const llms = `# USE THIS MODEL
+
+> ${dateStr} picks: the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
+
+Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized 0-100; single-signal models pass at 100%).
+
+## Picks
+
+${pickLine("agent", "Chatting")}
+${pickLine("everyday", "Everyday Coding")}
+${pickLine("hard", "Crazy Hard Coding")}
+
+## Full page
+
+- [USE THIS MODEL - interactive charts, tables, detail popups](https://usethismodel.vercel.app/)
+`;
+
 mkdirSync(dirname(OUT), { recursive: true });
 let out = html;
 writeFileSync(OUT, out);
 console.log(`wrote ${OUT} (${out.length} bytes)`);
+writeFileSync(dirname(OUT) + "/llms.txt", llms);
+console.log(`wrote ${dirname(OUT)}/llms.txt (${llms.length} bytes)`);
