@@ -7,7 +7,7 @@ Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting an
 ## Picks
 
 - [Chatting: Muse Spark 1.3 Contributor (max thinking)](https://usethismodel.vercel.app/) - $0.08/task, quality 100%, copy-paste OpenRouter ID: `meta/muse-spark-1.3-contributor`
-- [Everyday Coding: Muse Spark 1.3 Contributor (default)](https://usethismodel.vercel.app/) - $0.04/task, quality 93%, copy-paste OpenRouter ID: `meta/muse-spark-1.3-contributor`
+- [Everyday Coding: Muse Spark 1.3 Contributor (default)](https://usethismodel.vercel.app/) - $0.04/task, quality 90.8%, copy-paste OpenRouter ID: `meta/muse-spark-1.3-contributor`
 - [Crazy Hard Coding: GPT-6 Astra (xhigh thinking)](https://usethismodel.vercel.app/) - $6.52/task, quality 100%, copy-paste OpenRouter ID: `openai/gpt-6-astra`
 
 ## Full page
