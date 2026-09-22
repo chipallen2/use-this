@@ -460,7 +460,8 @@ async function main() {
   const hardElig = pickCheapestAbove(coding, hardCutoff);
 
   const picks = {
-    date: new Date().toISOString().slice(0, 10),
+    // Date stamped in America/Los_Angeles (Chip's tz) so the "Picks for" label matches the calendar day he sees.
+    date: new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" }),
     agent: { winner: slim(agentElig[0], agentBest), bestScore: agentBest, cutoff: round(agentCutoff, 2) },
     everyday: { winner: slim(everydayElig[0], codingBest), bestScore: codingBest, cutoff: round(everydayCutoff, 2) },
     hard: { winner: slim(hardElig[0], codingBest), bestScore: codingBest, cutoff: round(hardCutoff, 2) },

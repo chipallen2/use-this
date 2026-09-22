@@ -299,7 +299,7 @@ ${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 
 </div></div></div>`;
 }
 
-const dateStr = new Date(picks.date + "T12:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+const dateStr = new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
 
 function card(key, color) {
   const w = picks[key].winner;

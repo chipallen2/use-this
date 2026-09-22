@@ -1,15 +1,15 @@
 // supabase/functions/ut-recalc/index.ts
 // Deno Edge Function. POST -> check public.ut_state.last_calc server-side.
-// No-op ({ recalculated: false }) if last calc < 12h old, else dispatch the
+// No-op ({ recalculated: false }) if last calc < 1h old, else dispatch the
 // GitHub Actions recompute workflow and stamp last_calc.
-// Requires env: GITHUB_TOKEN (repo scope on goferchip/use-this), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
+// Requires env: GITHUB_TOKEN (repo scope on chipallen2/use-this), SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY.
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.106.0";
 
 const GITHUB_OWNER = "chipallen2";
 const GITHUB_REPO = "use-this";
-const GUARD_MS = 12 * 60 * 60 * 1000;
+const GUARD_MS = 1 * 60 * 60 * 1000;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
