@@ -2,7 +2,7 @@
 // Locked design: v4.html landing + popup.html detail. Inline CSS, inline SVG, tiny inline JS (modal only).
 // Usage: node scripts/render.mjs [datadir] [outpath]
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync, statSync } from "fs";
 import { dirname } from "path";
 
 const DATA = process.argv[2] || "data";
@@ -300,6 +300,10 @@ ${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 
 }
 
 const dateStr = new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
+// Calc instant: baked from data file mtime, stored as UTC only. Client JS
+// rewrites the fallback in the viewer's own timezone (see .calc-time script).
+const calcUtc = statSync(`${DATA}/picks.json`).mtime.toISOString().replace(/\.\d+Z$/, "Z");
+const calcPtFallback = new Date(calcUtc).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).replace(/([AP]M)/, (m) => m.toLowerCase()).replace(/ (?=[ap]m)/i, "");
 // Calc timestamp: CALC_ISO_UTC env (weekly cron sets from `date -u`) else fall back to
 // picks.date at 09:00 PT (16:00 UTC summer / 17:00 UTC winter) - Mondays 12:00 UTC cron.
 const calcISO = process.env.CALC_ISO_UTC || new Date(picks.date + "T16:00:00Z").toISOString();
@@ -366,6 +370,7 @@ const htmlTemplate = `<!DOCTYPE html>
 <meta name="theme-color" content="#2345ff">
 <meta name="description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
 <link rel="describedby" href="/llms.txt">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png">
@@ -448,7 +453,7 @@ tr.below td{opacity:.55}
 <h1>USE THIS MODEL</h1>
 <p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
 <div class="pick-date">
-<time datetime="${picks.date}">Picks for ${esc(dateStr)}</time> <span class="calc-time" data-calc-utc="${calcISO}">\u00B7 ${esc(calcPT)}</span>
+<time datetime="${picks.date}">Picks for ${esc(dateStr)}</time><span class="calc-time" data-calc-utc="${calcUtc}">· ${esc(calcPtFallback)}</span>
 <!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
 <form id="recalc-form" method="POST" action="${RECALC_URL}" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh or recalculation-started." toolautosubmit>
 <button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
