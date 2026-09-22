@@ -2,7 +2,7 @@
 // Locked design: v4.html landing + popup.html detail. Inline CSS, inline SVG, tiny inline JS (modal only).
 // Usage: node scripts/render.mjs [datadir] [outpath]
 
-import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "fs";
 import { dirname } from "path";
 
 const DATA = process.argv[2] || "data";
@@ -300,6 +300,10 @@ ${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 
 }
 
 const dateStr = new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
+// Calc timestamp: CALC_ISO_UTC env (weekly cron sets from `date -u`) else fall back to
+// picks.date at 09:00 PT (16:00 UTC summer / 17:00 UTC winter) - Mondays 12:00 UTC cron.
+const calcISO = process.env.CALC_ISO_UTC || new Date(picks.date + "T16:00:00Z").toISOString();
+const calcPT = new Date(calcISO).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).replace(/([AP]M)/, m => m.toLowerCase()).replace(/\s+(?=[AP]M)/i, "");
 
 function card(key, color) {
   const w = picks[key].winner;
@@ -362,6 +366,18 @@ const htmlTemplate = `<!DOCTYPE html>
 <meta name="theme-color" content="#2345ff">
 <meta name="description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
 <link rel="describedby" href="/llms.txt">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:title" content="Use This Model - Today's Best Model">
+<meta property="og:description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
+<meta property="og:image" content="https://usethismodel.vercel.app/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="1200">
+<meta property="og:url" content="https://usethismodel.vercel.app/">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
 <script type="application/ld+json">{LDJSON}</script>
 <title>Use This Model - Today's Best Model</title>
 <style>
@@ -372,6 +388,7 @@ header{margin-bottom:clamp(28px,4vh,48px)}
 h1{margin:0;font-size:clamp(26px,7vw,112px);white-space:nowrap;font-weight:900;line-height:.96;letter-spacing:-.065em}
 header p{margin:18px 0 0;font-size:clamp(18px,1.7vw,26px);line-height:1.35}
 .pick-date{display:flex;align-items:center;flex-wrap:wrap;gap:12px 20px;margin-top:22px;font-size:clamp(16px,1.4vw,22px);font-weight:700}
+.pick-date .calc-time{font-weight:400;opacity:.65;font-size:.8em}
 .recalculate{padding:10px 18px;border:2px solid currentColor;border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:14px;cursor:pointer}
 .recalculate:disabled{opacity:.55;cursor:default}
 main{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(14px,1.5vw,24px)}
@@ -431,7 +448,7 @@ tr.below td{opacity:.55}
 <h1>USE THIS MODEL</h1>
 <p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
 <div class="pick-date">
-<time datetime="${picks.date}">Picks for ${esc(dateStr)}</time>
+<time datetime="${picks.date}">Picks for ${esc(dateStr)}</time> <span class="calc-time" data-calc-utc="${calcISO}">\u00B7 ${esc(calcPT)}</span>
 <!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
 <form id="recalc-form" method="POST" action="${RECALC_URL}" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh or recalculation-started." toolautosubmit>
 <button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
@@ -567,6 +584,8 @@ document.modelContext.registerTool({name:"recalculate_picks",description:"Check 
 }catch(e){}
 }
 var recalcForm=document.getElementById("recalc-form");
+// Calc time: rewrite baked PT fallback in the viewer's own timezone.
+(function(){try{var el=document.querySelector(".calc-time");if(!el||!el.getAttribute("data-calc-utc"))return;var d=new Date(el.getAttribute("data-calc-utc"));var s=d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",timeZoneName:"short"}).replace(/([AP]M)/,function(m){return m.toLowerCase();}).replace(/\s+(?=[AP]M)/i,"");el.textContent="\u00B7 "+s;}catch(e){}})();
 if(recalcForm){recalcForm.addEventListener("submit",function(ev){
 if(ev.agentInvoked&&ev.respondWith){ev.preventDefault();ev.respondWith(doRecalc());return;}
 ev.preventDefault();
@@ -623,3 +642,14 @@ writeFileSync(OUT, out);
 console.log(`wrote ${OUT} (${out.length} bytes)`);
 writeFileSync(dirname(OUT) + "/llms.txt", llms);
 console.log(`wrote ${dirname(OUT)}/llms.txt (${llms.length} bytes)`);
+
+// Static brand assets: copy assets/* (og-image, favicons) into dist/ so they
+// survive fresh renders and weekly workflow runs.
+try {
+  for (const f of readdirSync("assets")) {
+    copyFileSync(`assets/${f}`, `${dirname(OUT)}/${f}`);
+  }
+  console.log("copied assets/* -> " + dirname(OUT));
+} catch (e) {
+  console.log("no assets/ dir, skipping static copy");
+}

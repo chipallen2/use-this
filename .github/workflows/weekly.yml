@@ -24,12 +24,13 @@ jobs:
           RECALC_URL: ${{ secrets.RECALC_URL }}
         run: |
           npm run scrape
+          export CALC_ISO_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           npm run render
       - name: Commit if changed
         run: |
           git config user.name "chipallen2"
           git config user.email "4950543+chipallen2@users.noreply.github.com"
           git pull --rebase origin main || git pull origin main
-          git add dist/index.html dist/llms.txt
+          git add dist/index.html dist/llms.txt dist/og-image.png dist/favicon.ico dist/favicon-32.png dist/favicon-64.png dist/apple-touch-icon.png
           git diff --cached --quiet || git commit -m " Weekly picks $(date +%F)"
           git push
