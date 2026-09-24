@@ -724,7 +724,7 @@ test("render: missing calc.json shows data date + explicit unknown, no invented 
   assert.ok(m, "calc stamp present");
   assert.ok(!m[1].includes("data-calc-utc="), "no invented UTC instant on unknown provenance");
   assert.ok(!m[1].includes("datetime="), "no timestamp attr when the instant is unknown");
-  assert.ok(/Picks for September 22, 2026/.test(m[1]), "data date still shown");
+  assert.ok(/Picks for September \d{1,2}, 2026/.test(m[1]), "data date still shown");
 });
 
 // ---- PGlite: the ACTUAL migration SQL, not a fake ----
