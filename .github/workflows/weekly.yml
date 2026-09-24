@@ -126,8 +126,10 @@ jobs:
           set -euo pipefail
           export CALC_UTC=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("data/calc.json","utf8")).calc_utc)')
           export PICKS_SHA=$(node -e 'console.log(require("crypto").createHash("sha256").update(require("fs").readFileSync("data/picks.json")).digest("hex").slice(0,12))')
-          LIVE_CALC=$(curl -fsS "https://usethismodel.vercel.app/data-calc.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).calc_utc))')
-          if [ "$LIVE_CALC" != "$CALC_UTC" ]; then
+          LIVE_CALC_RAW=$(curl -fsS "https://usethismodel.vercel.app/data-calc.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).calc_utc))')
+          LIVE_CALC=$(node -e 'console.log(new Date(process.argv[1]).toISOString())' "$LIVE_CALC_RAW")
+          CALC_NORM=$(node -e 'console.log(new Date(process.argv[1]).toISOString())' "$CALC_UTC")
+          if [ "$LIVE_CALC" != "$CALC_NORM" ]; then
             echo "canonical timestamp mismatch: live=$LIVE_CALC local=$CALC_UTC" >&2
             exit 1
           fi
