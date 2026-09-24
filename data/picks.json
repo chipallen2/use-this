@@ -1,16 +1,16 @@
 {
-  "date": "2026-09-22",
+  "date": "2026-09-24",
   "agent": {
     "winner": {
-      "model": "Muse Spark 1.3 Contributor",
+      "model": "Muse Spark 1.3",
       "effort": "max",
-      "score": 48.0,
-      "relative": 100.0,
+      "score": 48,
+      "relative": 100,
       "confidence": null,
       "costPerTask": 0.08,
       "outputTokens": null,
       "steps": null,
-      "speed": 225,
+      "speed": 222,
       "openRouterId": "meta/muse-spark-1.3-contributor",
       "sources": null,
       "deepScore": null,
@@ -24,10 +24,10 @@
   },
   "everyday": {
     "winner": {
-      "model": "Muse Spark 1.3 Contributor",
+      "model": "muse-spark-1.3-max",
       "effort": null,
-      "score": 91.1,
-      "relative": 91.1,
+      "score": 91.2,
+      "relative": 91.2,
       "confidence": null,
       "costPerTask": 0.04,
       "outputTokens": null,
@@ -37,7 +37,7 @@
       "sources": "Design Arena only - no DeepSWE data yet",
       "deepScore": null,
       "deepRaw": null,
-      "designScore": 91.1,
+      "designScore": 91.2,
       "designElo": 1302,
       "daPricePerMillion": 2
     },
@@ -46,10 +46,10 @@
   },
   "hard": {
     "winner": {
-      "model": "GPT-6 Astra",
+      "model": "gpt-6-astra",
       "effort": "xhigh",
-      "score": 100.0,
-      "relative": 100.0,
+      "score": 100,
+      "relative": 100,
       "confidence": 3,
       "costPerTask": 4.43,
       "outputTokens": 30000,
@@ -57,9 +57,9 @@
       "speed": null,
       "openRouterId": "openai/gpt-6-astra",
       "sources": "50% DeepSWE + 50% Design Arena Full-Stack",
-      "deepScore": 100.0,
-      "deepRaw": 74.0,
-      "designScore": 100.0,
+      "deepScore": 100,
+      "deepRaw": 74,
+      "designScore": 100,
       "designElo": 1329,
       "daPricePerMillion": 20
     },
