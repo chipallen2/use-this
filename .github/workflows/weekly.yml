@@ -2,35 +2,160 @@ name: weekly-recompute
 
 on:
   schedule:
-    # Mondays 12:00 UTC = 5am PDT / 4am PST
+    # Mondays 12:00 UTC = 5am PDT / 4am PST. Same guard as the pg_cron
+    # 12:05 UTC tick and anonymous recalc triggers: whoever claims the
+    # edge-fn lease first runs, the rest cleanly no-op. No duplicate dispatch.
     - cron: "0 12 * * 1"
   workflow_dispatch:
+    inputs:
+      ut_claim:
+        description: "Lease claim token (set by the ut-recalc edge fn dispatch; empty for manual runs)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
 
+# One recompute at a time; a second tick waits instead of double-scraping.
+concurrency:
+  group: weekly-recompute
+  cancel-in-progress: false
+
 jobs:
   recompute:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - run: npm ci
-      - run: npx playwright install chromium --with-deps
+      - name: Claim recalc lease (pure logic in scripts/ci/ut-claim.mjs)
+        # Edge-fn dispatches arrive with inputs.ut_claim already holding the
+        # lease - the dispatched, input-bearing run adopts it and alone
+        # computes. Schedule/manual runs POST to the same edge fn; that POST
+        # triggers the edge dispatch of the input-bearing job, so the wrapper
+        # run ALWAYS skips its own remaining compute (UT_SKIP=1 exact - the
+        # comparisons below test `!= '1'`, any decorated value would no-op
+        # the guard and double-compute). All decision logic lives in the
+        # tested ut-claim.mjs, not inline bash.
+        env:
+          RECALC_URL: ${{ secrets.RECALC_URL }}
+          UT_CLAIM_INPUT: ${{ inputs.ut_claim }}
+        run: |
+          set -euo pipefail
+          node scripts/ci/ut-claim.mjs
+      - name: Install deps (after ownership is decided)
+        if: env.UT_SKIP != '1'
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install chromium --with-deps
       - name: Scrape + render
+        if: env.UT_SKIP != '1'
         env:
           RECALC_URL: ${{ secrets.RECALC_URL }}
         run: |
+          set -euo pipefail
           npm run scrape
-          export CALC_ISO_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # Persist the real recompute instant alongside the data.
+          # Render-only deploys must NOT rewrite data/calc.json (rule below).
+          date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/calc_utc.txt
+          node -e 'const fs=require("fs");const s=fs.readFileSync("/tmp/calc_utc.txt","utf8").trim();const p=JSON.parse(fs.readFileSync("data/picks.json","utf8"));fs.writeFileSync("data/calc.json",JSON.stringify({calc_utc:s,data_date:p.date},null,2)+"\n");console.log("calc.json:",s);'
           npm run render
       - name: Commit if changed
+        if: env.UT_SKIP != '1'
         run: |
+          set -euo pipefail
           git config user.name "chipallen2"
           git config user.email "4950543+chipallen2@users.noreply.github.com"
-          git pull --rebase origin main || git pull origin main
-          git add dist/index.html dist/llms.txt dist/og-image.png dist/favicon.ico dist/favicon-32.png dist/favicon-64.png dist/apple-touch-icon.png
+          # --autostash: generated files may be dirty from scrape; never fail the pull.
+          git pull --rebase --autostash origin main
+          # Canonical deploy unit: source data + persisted calc timestamp +
+          # rendered assets. Committing calc.json keeps data provenance in git;
+          # committing data/*.json prevents later renders from redeploying
+          # older picks, and data-calc.json preserves the timestamp on
+          # render-only deploys. ut-stage.mjs verifies every path exists
+          # before `git add` (a missing path must fail loudly, not stage
+          # a partial unit).
+          node scripts/ci/ut-stage.mjs
           git diff --cached --quiet || git commit -m " Weekly picks $(date +%F)"
           git push
+      - name: Deploy to production
+        # From the REPO ROOT so Vercel uses the linked identity
+        # (VERCEL_PROJECT_ID / VERCEL_ORG_ID env fall back to the local
+        # .vercel/project.json values; a --cwd dist deploy would create a
+        # stray dist project). The bare deploy may drift the alias;
+        # re-point it explicitly. Pinned CLI (vercel@60.0.0): no floating
+        # major, no unparsed-output surprises.
+        if: env.UT_SKIP != '1'
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_CLI_VERSION: "60.0.0"
+        run: |
+          set -euo pipefail
+          export VERCEL_PROJECT_ID="${VERCEL_PROJECT_ID:-prj_kPjFoy9sTPlLOlP98HR10MQp0x4h}"
+          export VERCEL_ORG_ID="${VERCEL_ORG_ID:-team_uXydQqCbMMfY0AFbMihUBTNO}"
+          DEPLOY_OUT="$(npx -y "vercel@${VERCEL_CLI_VERSION}" deploy --prod --yes --token "$VERCEL_TOKEN" --scope chipallen2s-projects 2>&1)"
+          echo "$DEPLOY_OUT" | tail -n 5
+          DEPLOY_URL="$(printf '%s\n' "$DEPLOY_OUT" | grep -oE 'https://[^ ]+\.vercel\.app' | tail -n 1 || true)"
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "could not parse a deployment URL from vercel output - failing, never aliasing blind" >&2
+            exit 1
+          fi
+          echo "deployed: $DEPLOY_URL"
+          npx -y "vercel@${VERCEL_CLI_VERSION}" alias set "$DEPLOY_URL" usethismodel.vercel.app --token "$VERCEL_TOKEN" --scope chipallen2s-projects
+          echo "UT_DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+      - name: Report completion (stamp truthful calc timestamp)
+        # LAST step, only after the real recompute is live: scrape + render +
+        # commit + push + deploy ALL green above, AND the canonical
+        # data-calc.json fetched from production matches the local stamp.
+        # Failure anywhere above skips this - last_calc is never stamped on
+        # a failed run (no mtime poisoning). Lease ownership is enforced
+        # atomically INSIDE the complete RPC (wrong/stale/expired lease ->
+        # 409, last_calc untouched) - no separate pre-check, which would
+        # race anyway. A 409 here fails the job loudly; the 2h TTL backstops.
+        if: env.UT_SKIP != '1' && success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          UT_COMPLETE_TOKEN: ${{ secrets.UT_COMPLETE_TOKEN }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.UT_SUPABASE_SERVICE_KEY }}
+        run: |
+          set -euo pipefail
+          export CALC_UTC=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("data/calc.json","utf8")).calc_utc)')
+          export PICKS_SHA=$(node -e 'console.log(require("crypto").createHash("sha256").update(require("fs").readFileSync("data/picks.json")).digest("hex").slice(0,12))')
+          LIVE_CALC=$(curl -fsS "https://usethismodel.vercel.app/data-calc.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).calc_utc))')
+          if [ "$LIVE_CALC" != "$CALC_UTC" ]; then
+            echo "canonical timestamp mismatch: live=$LIVE_CALC local=$CALC_UTC" >&2
+            exit 1
+          fi
+          echo "canonical calc timestamp verified live: $LIVE_CALC"
+          node -e '
+          (async () => {
+            const calcUtc = process.env.CALC_UTC, sha = process.env.PICKS_SHA;
+            const picks = JSON.parse(require("fs").readFileSync("data/picks.json","utf8"));
+            const r = await fetch(process.env.SUPABASE_URL + "/functions/v1/ut-recalc", {
+              method: "POST", headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({ complete: true, token: process.env.UT_COMPLETE_TOKEN, claim: process.env.UT_CLAIM, calc_utc: calcUtc, picks: { date: picks.date, sha } }),
+            });
+            const j = await r.json().catch(() => ({}));
+            console.log("complete callback:", r.status, JSON.stringify(j));
+            if (!r.ok || j.status !== "completed") { console.error("COMPLETION CALLBACK FAILED - last_calc NOT stamped"); process.exit(1); }
+          })().catch((e) => { console.error("COMPLETION CALLBACK ERROR:", e.message); process.exit(1); });
+          ' 2>&1 | sed 's/[A-Za-z0-9_\-]\{20,\}/<redacted>/g'
+      - name: Report failure (release owned lease)
+        # Runs when any step above failed: releases OUR claim so a retry can
+        # proceed immediately. The 2h lease TTL backstops a missed call.
+        # Never touches a foreign live lease (RPC enforces ownership).
+        if: env.UT_SKIP != '1' && failure() && env.UT_CLAIM != ''
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          UT_COMPLETE_TOKEN: ${{ secrets.UT_COMPLETE_TOKEN }}
+        run: |
+          set -euo pipefail
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d "{\"fail\":true,\"token\":\"$UT_COMPLETE_TOKEN\",\"claim\":\"$UT_CLAIM\"}" \
+            "$SUPABASE_URL/functions/v1/ut-recalc" \
+            | sed 's/[A-Za-z0-9_\-]\{20,\}/<redacted>/g' || true

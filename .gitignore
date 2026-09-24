@@ -1,4 +1,6 @@
 node_modules/
-data/
+# Weekly data: picks/candidates are the canonical render inputs and MUST be
+# committable (`git add data/...` works). calc.json / dist/data-calc.json are
+# the persisted calc provenance and MUST be committable too.
 .vercel
-cli-latest
+!cli-latest

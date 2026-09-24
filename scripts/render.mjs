@@ -2,7 +2,7 @@
 // Locked design: v4.html landing + popup.html detail. Inline CSS, inline SVG, tiny inline JS (modal only).
 // Usage: node scripts/render.mjs [datadir] [outpath]
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync, statSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "fs";
 import { dirname } from "path";
 
 const DATA = process.argv[2] || "data";
@@ -300,14 +300,43 @@ ${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 
 }
 
 const dateStr = new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
-// Calc instant: baked from data file mtime, stored as UTC only. Client JS
-// rewrites the fallback in the viewer's own timezone (see .calc-time script).
-const calcUtc = statSync(`${DATA}/picks.json`).mtime.toISOString().replace(/\.\d+Z$/, "Z");
-const calcPtFallback = new Date(calcUtc).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).replace(/([AP]M)/, (m) => m.toLowerCase()).replace(/ (?=[ap]m)/i, "");
-// Calc timestamp: CALC_ISO_UTC env (weekly cron sets from `date -u`) else fall back to
-// picks.date at 09:00 PT (16:00 UTC summer / 17:00 UTC winter) - Mondays 12:00 UTC cron.
-const calcISO = process.env.CALC_ISO_UTC || new Date(picks.date + "T16:00:00Z").toISOString();
-const calcPT = new Date(calcISO).toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).replace(/([AP]M)/, m => m.toLowerCase()).replace(/\s+(?=[AP]M)/i, "");
+// Calc instant: the persisted last SUCCESSFUL recompute completion, baked
+// from data/calc.json (written by CI only after scrape+render+commit
+// succeed; deployed as dist/data-calc.json). The field is UTC; the page
+// localizes the SAME instant to date+time together so timezone rollover
+// agrees. No file mtimes, no render-time stamps - never fake freshness.
+// Legacy: calc.json absent (pre-migration) -> NO guessed instant. The page
+// shows only the data date and labels provenance unknown, with no time
+// element at all (inventing 16:00 UTC would fabricate a calc claim).
+let calcUtc, calcIsEstimate;
+try {
+  const calc = JSON.parse(readFileSync(`${DATA}/calc.json`, "utf8"));
+  const ms = Date.parse(calc.calc_utc);
+  if (Number.isNaN(ms)) throw new Error("bad calc_utc");
+  calcUtc = new Date(ms).toISOString();
+  calcIsEstimate = false;
+} catch {
+  calcUtc = null;
+  calcIsEstimate = true;
+}
+// Localize date AND time from the same instant in PT (site timezone), so
+// a UTC rollover never shows a date from one day with a time from another.
+const calcDate = calcUtc ? new Date(calcUtc) : new Date(picks.date + "T12:00:00-07:00");
+// datetime attr is the FULL UTC instant (datetime="...") when known, so
+// the machine-readable value and the displayed PT date+time describe the
+// same instant. When unknown there is NO datetime guess - the <time> holds
+// only the data date with no timestamp attr at all.
+// datetime attr uses the PT-local calendar date (matches the displayed PT
+// date string), not the UTC slice - a late-PT-night calc must not claim
+// the next UTC day in machine-readable metadata.
+const calcDatePT = calcIsEstimate
+  ? picks.date
+  : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(calcDate);
+const calcDateStr = calcIsEstimate
+  ? new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" })
+  : calcDate.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
+// Unknown provenance: no invented time, no timestamp attr - display says so.
+const calcTimeStr = calcIsEstimate ? "time unknown" : calcDate.toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).replace(/([AP]M)/, (m) => m.toLowerCase()).replace(/ (?=[ap]m)/i, "");
 
 function card(key, color) {
   const w = picks[key].winner;
@@ -357,7 +386,7 @@ const pickLD = (key, title) => {
 const ld = {
   "@context": "https://schema.org",
   "@type": "ItemList",
-  name: `USE THIS MODEL picks for ${picks.date}`,
+  name: calcIsEstimate ? `USE THIS MODEL picks for ${calcDatePT} (calc time unknown - data predates calc provenance)` : `USE THIS MODEL picks for ${calcDatePT} (calc ${calcUtc})`,
   itemListElement: [pickLD("agent", "Chatting"), pickLD("everyday", "Everyday Coding"), pickLD("hard", "Crazy Hard Coding")],
 };
 const ldJson = JSON.stringify(ld).replace(/</g, "\\u003c");
@@ -392,10 +421,13 @@ body{margin:0;min-height:100svh;padding:clamp(20px,3vw,52px);display:flex;flex-d
 header{margin-bottom:clamp(28px,4vh,48px)}
 h1{margin:0;font-size:clamp(26px,7vw,112px);white-space:nowrap;font-weight:900;line-height:.96;letter-spacing:-.065em}
 header p{margin:18px 0 0;font-size:clamp(18px,1.7vw,26px);line-height:1.35}
-.pick-date{display:flex;align-items:center;flex-wrap:wrap;gap:12px 20px;margin-top:22px;font-size:clamp(16px,1.4vw,22px);font-weight:700}
-.pick-date .calc-time{font-weight:400;opacity:.65;font-size:.8em}
-.recalculate{padding:10px 18px;border:2px solid currentColor;border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:14px;cursor:pointer}
+.pick-date{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;margin-top:22px;font-size:clamp(16px,1.4vw,22px);font-weight:700}
+.pick-date .calc-stamp{display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap}
+.pick-date .calc-time{font-weight:400;opacity:.65;font-size:.8em;white-space:nowrap}
+.recalculate{margin-left:auto;padding:10px 18px;border:2px solid currentColor;border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:14px;cursor:pointer}
 .recalculate:disabled{opacity:.55;cursor:default}
+.recalc-status{flex-basis:100%;font-weight:400;font-size:.8em;opacity:.85}
+@media(max-width:640px){.recalculate{margin-left:0}}
 main{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(14px,1.5vw,24px)}
 article{min-height:460px;padding:clamp(24px,2.6vw,44px);border-radius:24px;display:flex;flex-direction:column;color:#141414;cursor:pointer}
 .chat{background:#c5ff32}.everyday{background:#ff795e}.hard{background:#7926ec;color:#fff}
@@ -453,11 +485,14 @@ tr.below td{opacity:.55}
 <h1>USE THIS MODEL</h1>
 <p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
 <div class="pick-date">
-<time datetime="${picks.date}">Picks for ${esc(dateStr)}</time><span class="calc-time" data-calc-utc="${calcUtc}">· ${esc(calcPtFallback)}</span>
+<span class="calc-stamp">${calcIsEstimate
+  ? `<time>Picks for ${esc(calcDateStr)}</time><span class="calc-time" data-calc-estimate="1">time unknown</span>`
+  : `<time datetime="${calcUtc}">Picks for ${esc(calcDateStr)}</time><span class="calc-time" data-calc-utc="${calcUtc}">${esc(calcTimeStr)}</span>`}</span>
 <!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
-<form id="recalc-form" method="POST" action="${RECALC_URL}" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh or recalculation-started." toolautosubmit>
+<form id="recalc-form" method="POST" action="${RECALC_URL}" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh, recalculation-started, in-progress, or a truthful error." toolautosubmit>
 <button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
 </form>
+<p class="recalc-status" id="recalc-status" role="status" aria-live="polite"></p>
 </div>
 </header>
 <main aria-label="AI model recommendations">
@@ -465,7 +500,7 @@ ${card("agent", "chat")}
 ${card("everyday", "everyday")}
 ${card("hard", "hard")}
 </main>
-<footer>Updated ${esc(dateStr)} - ${linkify("scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Full-Stack (coding)")}</footer>
+<footer>Updated ${esc(calcDateStr)} ${esc(calcTimeStr)} - ${linkify("scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Full-Stack (coding)")}</footer>
 ${modal("agent", "chat", "AA Intelligence Index", 90, why.agent)}
 ${modal("everyday", "everyday", "DeepSWE + Design Arena", 90, why.everyday)}
 ${modal("hard", "hard", "DeepSWE + Design Arena", 97, why.hard)}
@@ -568,20 +603,44 @@ tsvg.querySelectorAll(".ygrid-full").forEach(function(g){g.style.display=full?""
 var RECALC_ENDPOINT="${RECALC_URL}";
 function collectPicks(){
 var out={};
+try{var ct=document.querySelector(".calc-time");var utc=ct&&ct.getAttribute("data-calc-utc");if(utc)out.data_calc_utc=utc;}catch(e){}
+try{if(!out.data_date){var dt=document.querySelector(".calc-stamp time");if(dt&&dt.getAttribute("datetime")&&/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(dt.getAttribute("datetime")))out.data_date=dt.getAttribute("datetime");}}catch(e){}
+var picksOut={};
 document.querySelectorAll("[data-webmcp-pick]").forEach(function(el){
 var k=el.getAttribute("data-webmcp-pick");
-out[k]={category:el.getAttribute("data-category"),model:el.getAttribute("data-model"),thinking:el.getAttribute("data-thinking"),pricePerTask:parseFloat(el.getAttribute("data-price")),qualityPct:parseFloat(el.getAttribute("data-quality")),openRouterId:el.getAttribute("data-openrouter-id")};
+picksOut[k]={category:el.getAttribute("data-category"),model:el.getAttribute("data-model"),thinking:el.getAttribute("data-thinking"),pricePerTask:parseFloat(el.getAttribute("data-price")),qualityPct:parseFloat(el.getAttribute("data-quality")),openRouterId:el.getAttribute("data-openrouter-id")};
 });
+out.picks=picksOut;
 return out;
 }
+function isValidTimestamp(v){return typeof v==="string"&&v!==null&&!Number.isNaN(Date.parse(v));}
 function doRecalc(){
+// Truthful status for humans AND WebMCP: resolves to an object, never a
+// fake "already fresh". Statuses: fresh / started / in-progress / error.
+// r.ok is checked FIRST: any non-2xx is an error even if the body carries
+// a plausible JSON status. 2xx bodies must carry a recognized status with
+// its required timestamp (fresh->eligible_after, started/in-progress->
+// in_progress_since); anything else (200 HTML, 200 {}, 500 fresh) errors.
 return fetch(RECALC_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
-.then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+.then(function(r){return r.text().then(function(t){var j=null;try{j=JSON.parse(t);}catch(e){}return {ok:r.ok,status:r.status,j:(j&&typeof j==="object")?j:null,raw:t};});})
 .then(function(res){
-if(res.j&&res.j.recalculated)return "Recalculation started - fresh picks incoming, check back soon.";
-return "Picks already fresh (last calc: "+((res.j&&res.j.last_calc)||"today")+").";
+if(!res.ok||!res.j)return {status:"error",message:"Recalculation failed: HTTP "+res.status+". Please retry.",last_calc:null};
+var j=res.j,st=j.status;
+if(st==="fresh"){
+if(!isValidTimestamp(j.eligible_after))return {status:"error",message:"Recalculation failed: bad fresh response (missing eligible_after). Please retry.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null};
+return {status:"fresh",message:"Picks already fresh.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null,eligible_after:j.eligible_after};
+}
+if(st==="started"||st==="in-progress"){
+if(!isValidTimestamp(j.in_progress_since))return {status:"error",message:"Recalculation failed: bad "+st+" response (missing in_progress_since). Please retry.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null};
+return {status:st,message:st==="started"?"Recalculation started - fresh picks incoming, check back soon.":"Recalculation already running - check back soon.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null,in_progress_since:j.in_progress_since};
+}
+return {status:"error",message:"Recalculation failed: "+(j.error||("HTTP "+res.status))+". Please retry.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null};
+},function(){
+return {status:"error",message:"Recalculation request failed (network error). Please retry.",last_calc:null};
 });
 }
+function shortStatus(r){return r.status==="fresh"?"Already fresh":r.status==="started"?"Started - check back soon":r.status==="in-progress"?"Already running - check back soon":"Failed - retry";}
+function recalcMessage(r){var s=shortStatus(r);return s+(r.last_calc?" (last calc "+r.last_calc+")":"");}
 if(document.modelContext&&document.modelContext.registerTool){
 try{
 document.modelContext.registerTool({name:"get_picks",description:"Returns the 3 current model picks (chatting, everyday coding, crazy hard coding) with model name, thinking level, price per task, quality score, and copy-paste OpenRouter ID.",inputSchema:{type:"object",properties:{}},execute:function(){return Promise.resolve(JSON.stringify(collectPicks()));}});
@@ -589,14 +648,28 @@ document.modelContext.registerTool({name:"recalculate_picks",description:"Check 
 }catch(e){}
 }
 var recalcForm=document.getElementById("recalc-form");
-// Calc time: rewrite baked PT fallback in the viewer's own timezone.
-(function(){try{var el=document.querySelector(".calc-time");if(!el||!el.getAttribute("data-calc-utc"))return;var d=new Date(el.getAttribute("data-calc-utc"));var s=d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",timeZoneName:"short"}).replace(/([AP]M)/,function(m){return m.toLowerCase();}).replace(/\s+(?=[AP]M)/i,"");el.textContent="\u00B7 "+s;}catch(e){}})();
+// Calc time: rewrite the baked instant in the viewer's own timezone, keeping
+// date+time from the SAME baked instant (data-calc-utc) so rollover agrees.
+// The <time datetime> is a full instant; date text is the viewer's local
+// calendar date for that same instant. Estimate pages have no instant: the
+// server-rendered "time unknown" copy stands, nothing is rewritten.
+(function(){try{var stamp=document.querySelector(".calc-stamp");var el=document.querySelector(".calc-time");if(!stamp||!el||!el.getAttribute("data-calc-utc"))return;var d=new Date(el.getAttribute("data-calc-utc"));if(isNaN(d.getTime()))return;var t=stamp.querySelector("time");if(t){var ds=d.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});t.textContent="Picks for "+ds;try{t.setAttribute("datetime",d.toISOString());}catch(e){}}var s=d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",timeZoneName:"short"}).replace(/([AP]M)/,function(m){return m.toLowerCase();}).replace(/\s+(?=[AP]M)/i,"");el.textContent=s;}catch(e){}})();
+// The button keeps ONE stable label ("Recalculate for today") and stays
+// enabled after started/in-progress so a later check/retry is always
+// possible. Status text (short: "Started - check back soon") lives in the
+// separate #recalc-status output, never as a huge pill on the button.
+function setRecalcUI(pending,msg,isErr){
+var btn=document.getElementById("recalc"),st=document.getElementById("recalc-status");
+if(btn){btn.disabled=false;btn.textContent="Recalculate for today";}
+if(st){st.textContent=msg||"";st.setAttribute("data-state",isErr?"error":"ok");}
+}
 if(recalcForm){recalcForm.addEventListener("submit",function(ev){
-if(ev.agentInvoked&&ev.respondWith){ev.preventDefault();ev.respondWith(doRecalc());return;}
+if(ev.agentInvoked&&ev.respondWith){ev.preventDefault();ev.respondWith(doRecalc().then(function(r){return JSON.stringify(r);}));return;}
 ev.preventDefault();
 var btn=document.getElementById("recalc");
 if(btn){btn.disabled=true;btn.textContent="Checking...";}
-doRecalc().then(function(msg){if(btn)btn.textContent=msg;}).catch(function(){if(btn){btn.textContent="Recalculate for today";btn.disabled=false;}});
+setRecalcUI(true,"Checking...");
+doRecalc().then(function(r){setRecalcUI(false,recalcMessage(r),r.status==="error");}).catch(function(){setRecalcUI(false,"Failed - retry",true);});
 });}
 })();
 </script>
@@ -614,7 +687,7 @@ function pickLine(key, title) {
 }
 const llms = `# USE THIS MODEL
 
-> ${dateStr} picks: the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
+> ${calcDateStr} picks (last successful calc: ${calcIsEstimate ? "unknown - data predates calc provenance" : calcUtc}): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
 
 Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized 0-100; single-signal models pass at 100%).
 
@@ -647,6 +720,9 @@ writeFileSync(OUT, out);
 console.log(`wrote ${OUT} (${out.length} bytes)`);
 writeFileSync(dirname(OUT) + "/llms.txt", llms);
 console.log(`wrote ${dirname(OUT)}/llms.txt (${llms.length} bytes)`);
+// Persisted calc provenance for deploys + verification (never a render-time fake).
+writeFileSync(dirname(OUT) + "/data-calc.json", JSON.stringify({ calc_utc: calcUtc, estimate: calcIsEstimate, data_date: picks.date }, null, 2) + "\n");
+console.log(`wrote ${dirname(OUT)}/data-calc.json`);
 
 // Static brand assets: copy assets/* (og-image, favicons) into dist/ so they
 // survive fresh renders and weekly workflow runs.

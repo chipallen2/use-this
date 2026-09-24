@@ -6,8 +6,16 @@
   "scripts": {
     "scrape": "node scripts/scrape.mjs data",
     "render": "node scripts/render.mjs data dist/index.html",
-    "build": "node scripts/render.mjs data dist/index.html"
+    "build": "node scripts/render.mjs data dist/index.html",
+    "test": "node --test tests/recalc.test.mjs"
   },
-  "engines": { "node": ">=20" },
-  "dependencies": { "playwright": "^1.55.0" }
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8"
+  }
 }
