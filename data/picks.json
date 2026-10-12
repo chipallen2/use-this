@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-10",
+  "date": "2026-10-12",
   "agent": {
     "winner": {
       "model": "Muse Spark 1.3",
@@ -10,7 +10,7 @@
       "costPerTask": 0.08,
       "outputTokens": null,
       "steps": null,
-      "speed": 175,
+      "speed": 127,
       "openRouterId": "meta/muse-spark-1.3-contributor",
       "sources": null,
       "deepScore": null,
