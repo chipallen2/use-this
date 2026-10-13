@@ -66,9 +66,15 @@ function findOpenRouterModel(modelName, openRouterModels) {
     ["gpt-5.6-luna", "openai/gpt-5.6-luna"],
     ["gpt-5.6-terra", "openai/gpt-5.6-terra"],
     ["gpt-5.5-pro", "openai/gpt-5.5-pro"],
+    ["claude-opus-5.5", "anthropic/claude-opus-5.5"],
     ["claude-opus-5", "anthropic/claude-opus-5"],
-    ["claude-fable-5", "anthropic/claude-fable-5"],
+    ["claude-sonnet-5.5", "anthropic/claude-sonnet-5.5"],
     ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
+    ["claude-haiku-5.5", "anthropic/claude-haiku-5.5"],
+    ["claude-fable-5.1", "anthropic/claude-fable-5.1"],
+    ["claude-fable-5", "anthropic/claude-fable-5"],
+    ["muse-wonder", "meta/muse-wonder"],
+    ["gemini-4-argon", "google/gemini-4-argon"],
     ["gemini-3.8-flash", "google/gemini-3.8-flash"],
     ["gemini-3.7-flash", "google/gemini-3.7-flash"],
     ["gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite"],
@@ -432,6 +438,35 @@ async function main() {
   const designPool = attachOpenRouter(designArenaRaw, openRouterModels);
   const coding = dedupeByModel(addContributorTwins(blendCodingScores(deepSWEPool, designPool), openRouterModels));
   const agentPool = dedupeByModel(addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels));
+
+  // FAIL LOUD, never silently deploy stale data as fresh. A scrape that
+  // returns an empty pool (AA changed markup, network hiccup, API drift)
+  // must break the run with a non-zero exit so CI fails, the lease stays
+  // uncompleted, last_calc is never stamped, and no deploy happens.
+  const failLoud = (cond, msg) => { if (cond) { console.error("SCRAPE GUARD FAILED: " + msg); process.exit(1); } };
+  failLoud(!intelligenceRaw.length, "AA Intelligence Index scrape returned 0 rows");
+  failLoud(!agentPool.length, "AA agent pool empty after OpenRouter attach (all rows unmatched?)");
+  failLoud(!deepSWERaw.length, "DeepSWE scrape returned 0 rows");
+  failLoud(!coding.length, "coding pool empty after blend");
+  // Alias-coverage guard: detect rows the pool actually LOST. A row is
+  // lost when its raw name never made it into the pool at all - neither
+  // as its own slot nor merged by dedupe. Compare normalized raw names
+  // against the pool: entries whose model text has no pool counterpart
+  // were dropped by attachOpenRouter (unknown model or unsupported
+  // effort). If a large share drop, model-name drift (new 5.5-style
+  // versions, renamed models) is silently losing real contenders - fail
+  // instead of deploying a pool that lost them.
+  const poolModels = new Set(agentPool.map((x) => normalizeModelName(x.model)));
+  const dropped = intelligenceRaw.filter(
+    (c) => ![...poolModels].some((pm) => pm.includes(normalizeModelName(c.model)) || normalizeModelName(c.model).includes(pm)),
+  );
+  failLoud(
+    dropped.length > Math.ceil(intelligenceRaw.length * 0.15),
+    `${dropped.length}/${intelligenceRaw.length} AA rows lost before the pool (sample: ${dropped
+      .slice(0, 3)
+      .map((c) => c.rawName)
+      .join(" | ")})`,
+  );
 
   // Agent frontier: best score among reasonably priced (<= $3/task), per selector discipline
   const reasonablyPriced = agentPool.filter((x) => x.costPerTask <= 3);
