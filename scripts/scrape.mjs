@@ -64,6 +64,11 @@ const versionSig = (normStr) => {
 //   ("5 1" -> "51"),
 // so dotted alias versions match separator-split leaderboard names
 // (Design Arena "claude-fable-5-1" -> tokens "5","1" -> "51").
+// NOTE: the dot-stripped augmentation is what let "gemini 3.5 flash"
+// satisfy alias "qwen3.5" on version digits alone (both carry "35",
+// "flash" is a shared generic). aliasHits() below requires the
+// family stem to match for bare-digit-carrying aliases - the set alone
+// is never sufficient.
 function tokenSet(normStr) {
   const toks = normStr.split(" ").filter(Boolean);
   const set = new Set(toks);
@@ -165,7 +170,6 @@ const MODEL_ALIASES = [
   ["qwen3.7-max", "qwen/qwen3.7-max"],
   ["qwen3.6", "qwen/qwen3.6-35b-a3b"],
   ["qwen3.5", "qwen/qwen3.5-122b-a10b"],
-  ["mimo-v2.6-pro", "xiaomi/mimo-v2.6-pro"],
   ["minimax-m3", "minimax/minimax-m3"],
   ["step-5", "stepfun/step-5-preview"],
   ["solar-mini-4", "upstage/solar-mini4"],
@@ -173,18 +177,70 @@ const MODEL_ALIASES = [
   ["deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash"],
   ["deepseek-v4-pro", "deepseek/deepseek-v4-pro-0813"],
   ["deepseek-v4", "deepseek/deepseek-v4-pro-0813"],
+  ["ling-3.1-flash", "inclusionai/ling-3.1-flash"],
+  ["qwen3-coder-next", "qwen/qwen3-coder-next"],
   ["gpt-5.6-sol-xhigh", "openai/gpt-5.6-sol"],
-  ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
   ["muse-spark-1.3-max", "meta/muse-spark-1.3"],
   ["muse-spark-1.3-contributor", "meta/muse-spark-1.3-contributor"],
   ["muse-spark-1.3", "meta/muse-spark-1.3"],
   ["muse-spark-1.2-contributor", "meta/muse-spark-1.2-contributor"],
   ["muse-spark-1.2", "meta/muse-spark-1.2"],
   ["muse-spark-1.1", "meta/muse-spark-1.1"],
+  ["mimo-v2.6-flash", "xiaomi/mimo-v2.6-flash"],
+  ["mimo-v2.6", "xiaomi/mimo-v2.6-pro"],
+  ["mimo-v2.6-pro-ultraspeed", "xiaomi/mimo-v2.6-pro-ultraspeed"],
+  // Separator-split Design Arena form ("mimo-v2-6-pro-ultraspeed"): same
+  // reason as kimi-k2-5 above - explicit row so the version gate sees
+  // sig "26" on both sides instead of needle "2" vs alias "26".
+  ["mimo-v2-6-pro-ultraspeed", "xiaomi/mimo-v2.6-pro-ultraspeed"],
+  ["mimo-v2.5", "xiaomi/mimo-v2.5"],
   ["kimi-k2.7-code", "moonshotai/kimi-k2.7-code"],
+  ["kimi-k2.6", "moonshotai/kimi-k2.6"],
+  ["kimi-k2.5", "moonshotai/kimi-k2.5"],
+  // Separator-split Design Arena form ("kimi-k2-5"): the generic in-order
+  // digit walk cannot prove "k2 5" is version "2.5" rather than "25",
+  // so the split form gets its own explicit row (same version gate as
+  // every alias - "kimi-k2-6" will NOT take this row).
+  ["kimi-k2-5", "moonshotai/kimi-k2.5"],
+  ["glm-5.2", "z-ai/glm-5.2"],
+  ["glm-5.1", "z-ai/glm-5.1"],
+  ["glm-5-turbo", "z-ai/glm-5-turbo"],
+  ["glm-5v-turbo", "z-ai/glm-5v-turbo"],
+  ["grok-4.20", "x-ai/grok-4.20"],
+  ["grok-4.3", "x-ai/grok-4.3"],
+  ["claude-opus-4.8", "anthropic/claude-opus-4.8"],
+  ["claude-opus-4.7", "anthropic/claude-opus-4.7"],
+  ["claude-opus-4.6", "anthropic/claude-opus-4.6"],
+  ["claude-opus-4.5", "anthropic/claude-opus-4.5"],
+  ["claude-opus-4.1", "anthropic/claude-opus-4.1"],
+  ["claude-sonnet-4.6", "anthropic/claude-sonnet-4.6"],
+  ["claude-sonnet-4.5", "anthropic/claude-sonnet-4.5"],
+  ["claude-sonnet-4", "anthropic/claude-sonnet-4"],
+  ["gemini-3.6-flash", "google/gemini-3.6-flash"],
+  ["gemini-3.5-flash", "google/gemini-3.5-flash"],
+  ["gemini-3-flash-preview", "google/gemini-3-flash-preview"],
+  ["deepseek-v4-flash", "deepseek/deepseek-v4-flash"],
+  ["gpt-5.4", "openai/gpt-5.4"],
+  ["gpt-5.2-codex", "openai/gpt-5.2-codex"],
+  ["gpt-5.2", "openai/gpt-5.2"],
+  ["gpt-5.1-codex", "openai/gpt-5.1-codex"],
+  ["hampshire", null], // NO OpenRouter listing - unmatched w/ Design registry price
+  ["inkling", "thinkingmachines/inkling"],
   ["muse-spark", "meta/muse-spark"],
+  // Design Arena effort-suffixed board ids: the board's reasoning rollup
+  // rows ("<model>-max", "-xhigh", ...) alias to the base model's
+  // OpenRouter id. Listed here (not via suffix-stripping) so each maps
+  // loudly and version-gated, and new suffixes fail unmatched instead
+  // of silently landing on the wrong model.
+  ["gpt-6-astra-max", "openai/gpt-6-astra"],
   // Leaderboard-only / eval names: NEVER match a real model. Dropped loudly.
+  // hampshire (Thinking Machines) has NO OpenRouter listing AND a real
+  // Design Arena registry price ($0.435/$0.87 per 1M) - so it is eval-class
+  // here (dropped from the blended pool) rather than unmatched: an
+  // unmatched entry would carry only a synthetic id with no purchasable
+  // model behind it. If hampshire lands on OpenRouter, promote to an alias.
   ["camellia", null],
+  ["hampshire", null], // NO OpenRouter listing - eval-drop (see note above)
   ["solar-pro4-direct", null],
   ["yoda", null],
   ["evergreen", null],
@@ -198,12 +254,65 @@ const normKey = (k) => k.toLowerCase().replace(/[-_]/g, " ");
 // "opus 5" does not match "opus 5.5"), where a digit-run in the needle
 // ("5 1") also satisfies the concatenation (alias "5.1"), covering
 // Design Arena's separator-split ids ("claude-fable-5-1").
+// STEM BINDING (2026-10-14 coding fix): aliases whose key carries digits
+// fused to letters ("qwen3.5", "mimo", "glm-5", ...) must ALSO match
+// the letter stem, not just the digit signature. Without this, the
+// dot-stripped augmentation in tokenSet() lets "gemini 3.5 flash"
+// satisfy alias "qwen3.5" on version digits alone (both carry "35",
+// "flash" is a shared generic) - the exact silent mislabel that put
+// Gemini 3.5 Flash rows on the Qwen 3.5 card for weeks. Pure-digit
+// aliases ("step-5", "gpt-5.5" -> tokens "gpt","5.5"...) and
+// pure-letter aliases ("hampshire", "inkling") skip the stem check:
+// the former are version-gated by versionSig, the latter have no stem
+// to bind. Mixed tokens require: EITHER the literal token present
+// ("qwen3.5" in needle) OR (stem present AND digit-sig present).
 function aliasHits(keyNorm, needleNorm) {
   const have = tokenSet(needleNorm);
   return keyNorm.split(" ").every((tok) => {
     if (/^[\d.]+$/.test(tok) && /\d/.test(tok)) return have.has(tok.replace(/\./g, ""));
     const m = tok.match(/\d[\d.]*/);
-    if (m) return have.has(tok) || have.has(m[0].replace(/\./g, ""));
+    if (m) {
+      if (have.has(tok)) return true; // literal fused token present
+      // Stem binding: the letter-stem of a fused token must be present
+      // as a substring of SOME needle token, AND the digit signature
+      // must be present. Digits alone are never enough (gemini-3.5 vs
+      // qwen3.5 trap). The sig here is the token's own digits
+      // dot-stripped, so "5-1"-style splits match ("51") while a bare
+      // "5" in the needle does NOT satisfy alias "5.1".
+      const stem = tok.slice(0, m.index).toLowerCase();
+      const sig = m[0].replace(/\./g, "");
+      if (!stem) return have.has(sig);
+      const stemHit = needleNorm.split(" ").some((nt) => nt.includes(stem));
+      // Suffix-form versions ("k2.5", alias sig "25") also match the
+      // needle's per-token digits individually: "k2 5" carries "2"
+      // inside token "k2" and bare token "5" (Design Arena
+      // "kimi-k2-5"). Without this, only dot-joined needles match.
+      if (stemHit && have.has(sig)) return true;
+      if (!stemHit) return false;
+      const digits = sig.split("");
+      // All alias digits must appear IN ORDER across needle tokens -
+      // "k2 5" satisfies "25" (k2 then 5) but not "52". Digits ride
+      // EITHER fused inside a stem-sharing token ("k2" carries stem
+      // "k") OR as bare tokens ("5"); digits fused inside a FOREIGN
+      // token never count ("35" inside "qwen3.5" must not satisfy a
+      // "5" need - that hole is what let gemini-3.5 take qwen3.5-
+      // adjacent aliases pre-stem-binding).
+      let di = 0;
+      const ntoks = needleNorm.split(" ");
+      const digAt = (nt) => {
+        // Only digits fused to OUR stem, or bare digit tokens, count.
+        if (/^[\d.]+$/.test(nt)) return nt.replace(/\./g, "").split(""); // bare: "5" -> ["5"]
+        if (!nt.toLowerCase().includes(stem)) return []; // foreign token: digits invisible
+        const dm = nt.match(/\d[\d.]*/g) || [];
+        return dm.flatMap((d) => d.replace(/\./g, "").split(""));
+      };
+      // Greedy in-order consumption across needle tokens.
+      const flat = ntoks.flatMap((nt) => digAt(nt));
+      for (const d of flat) {
+        if (di < digits.length && d === digits[di]) di++;
+      }
+      return di === digits.length;
+    }
     return have.has(tok);
   });
 }
@@ -571,6 +680,7 @@ async function main() {
   const openRouterModels = await getOpenRouterModels();
   console.log("Fetching Design Arena...");
   let designArenaRaw = [];
+  let designArenaFailed = false;
   try {
     const [board, pricing] = await Promise.all([scrapeDesignArena(), getDesignArenaPricing().catch((e) => {
       console.warn("Design Arena registry fetch failed, OpenRouter fallback for pricing:", e.message);
@@ -581,7 +691,11 @@ async function main() {
     const withPrice = board.filter((r) => r.daPricePerMillion != null).length;
     console.log(`Design Arena: ${board.length} models (${withPrice} with registry price)`);
   } catch (error) {
-    console.warn("Design Arena fetch failed, continuing DeepSWE-only:", error.message);
+    // No silent DeepSWE-only fallback: the 2026-10-14 coding boards went
+    // stale-looking exactly this way (a failed Design fetch redeployed as
+    // fresh with half the signal missing). Flag + fail below.
+    designArenaFailed = true;
+    console.warn("Design Arena fetch failed:", error.message);
   }
   console.log("Launching browser...");
   const browser = await chromium.launch({ headless: true });
@@ -608,6 +722,8 @@ async function main() {
   failLoud(!intelligenceRaw.length, "AA Intelligence Index scrape returned 0 rows");
   failLoud(!agentPool.length, "AA agent pool empty after OpenRouter attach (all rows unmatched?)");
   failLoud(!deepSWERaw.length, "DeepSWE scrape returned 0 rows");
+  failLoud(designArenaFailed, "Design Arena fetch failed - refusing DeepSWE-only deploy (stale-board cause 2026-10-14)");
+  failLoud(!designArenaRaw.length, "Design Arena scrape returned 0 rows");
   failLoud(!coding.length, "coding pool empty after blend");
   // Unmatched-model guards: unknown AA names are KEPT as their own entries
   // (see toUnmatchedEntry), so they can never silently mislabel as an old
@@ -622,6 +738,23 @@ async function main() {
   //   2026-10-14 pool runs ~40%. The top-10 guard above is the sharp one.)
   // CI output logs every unmatched name (attachOpenRouter UNMATCHED lines),
   // so the fix is always: add one alias row, re-run.
+  // CODING SIDE (2026-10-14): same treatment for the blended coding pool -
+  // the coding top-10 is where the Gemini-3.5-Flash-on-Qwen-3.5 mislabel
+  // sat undetected for weeks. Coding long-tail unmatched (dated snapshots
+  // like claude-opus-4-5-20251101, grok-4.20-0309-reasoning, gemini
+  // previews with no released OR listing) is expected; the top-10 guard
+  // is the sharp one.
+  const unmatchedCoding = coding.filter((x) => x.openRouterId.startsWith("unmatched:"));
+  const topCoding = [...coding].sort((a, b) => b.score - a.score).slice(0, 10);
+  const topCodingUnmatched = topCoding.filter((x) => x.openRouterId.startsWith("unmatched:"));
+  failLoud(
+    topCodingUnmatched.length > 0,
+    `${topCodingUnmatched.length} unmatched model(s) in coding top-10 (add MODEL_ALIASES rows): ${topCodingUnmatched.map((x) => x.rawName).join(" | ")}`,
+  );
+  failLoud(
+    unmatchedCoding.length > Math.ceil(coding.length * 0.5),
+    `${unmatchedCoding.length}/${coding.length} coding pool entries unmatched (sample: ${unmatchedCoding.slice(0, 3).map((x) => x.rawName).join(" | ")})`,
+  );
   const unmatchedAgent = agentPool.filter((x) => x.openRouterId.startsWith("unmatched:"));
   const topAgent = [...agentPool].sort((a, b) => b.score - a.score).slice(0, 10);
   const topUnmatched = topAgent.filter((x) => x.openRouterId.startsWith("unmatched:"));
@@ -699,4 +832,4 @@ if (SHOULD_RUN) main().catch((error) => { console.error(error); process.exit(1);
 // Test seam: matcher unit tests import the pure alias machinery without
 // launching a browser. `node --test tests/matcher.test.mjs` exercises
 // boundary/version/unmatched behavior against fake OpenRouter catalogs.
-export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter };
+export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, blendCodingScores, medianUsageTokens, addContributorTwins };
