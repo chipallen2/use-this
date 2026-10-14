@@ -28,10 +28,24 @@ function linkify(s) {
     .replace(/DeepSWE/g, blink(DEEPSWE_URL, "DeepSWE"));
 }
 
-// Short display name from OpenRouter ID, e.g. openai/gpt-5.6-luna-pro -> ["GPT-5.6", "Luna Pro"]
+// Short display name from OpenRouter ID, e.g. openai/gpt-5.6-luna-pro -> ["GPT-5.6", "Luna Pro"].
+// Versioned entries MUST list the newest version FIRST (regexes match top-down:
+// "opus 5.5" before "opus 5") - same longest-first discipline as the scrape aliases.
+// Unknown/unmatched ids fall through to the generic versioned splitter at the end.
 function displayName(id) {
   const slug = id.split("/").pop();
+  // Synthetic unmatched entries carry the raw AA name in slug form
+  // ("unmatched:claude-opus-6"): display the real name, tagged NEW.
+  if (slug.startsWith("unmatched:")) {
+    const raw = slug.slice("unmatched:".length).replace(/-/g, " ");
+    const titled = raw.replace(/\b\w/g, (c) => c.toUpperCase());
+    return [titled, "NEW"];
+  }
   const map = [
+    [/^gpt-6-1-sol-pro$/, ["GPT-6.1", "Sol Pro"]],
+    [/^gpt-6-1-sol$/, ["GPT-6.1", "Sol"]],
+    [/^gpt-6-luna-pro$/, ["GPT-6", "Luna Pro"]],
+    [/^gpt-6-luna$/, ["GPT-6", "Luna"]],
     [/^gpt-6-astra$/, ["GPT-6", "Astra"]],
     [/^gpt-6-sol$/, ["GPT-6", "Sol"]],
     [/^gpt-5\.6-sol-pro$/, ["GPT-5.6", "Sol Pro"]],
@@ -39,6 +53,10 @@ function displayName(id) {
     [/^gpt-5\.6-luna$/, ["GPT-5.6", "Luna"]],
     [/^gpt-5\.6-terra$/, ["GPT-5.6", "Terra"]],
     [/^gpt-5\.5-pro$/, ["GPT-5.5", "Pro"]],
+    [/^gpt-5\.5$/, ["GPT-5.5", ""]],
+    [/^gpt-5\.3-codex$/, ["GPT-5.3", "Codex"]],
+    [/^gpt-oss-120b$/, ["GPT-OSS", "120B"]],
+    [/^gpt-oss-20b$/, ["GPT-OSS", "20B"]],
     [/^claude-opus-5\.5.*$/, ["Claude", "Opus 5.5"]],
     [/^claude-opus-5.*$/, ["Claude", "Opus 5"]],
     [/^claude-sonnet-5\.5.*$/, ["Claude", "Sonnet 5.5"]],
@@ -47,19 +65,41 @@ function displayName(id) {
     [/^claude-fable-5\.1.*$/, ["Claude", "Fable 5.1"]],
     [/^claude-fable-5.*$/, ["Claude", "Fable 5"]],
     [/^muse-wonder.*$/, ["Muse", "Wonder"]],
+    [/^muse-glimmer.*$/, ["Muse", "Glimmer"]],
     [/^gemini-4-argon.*$/, ["Gemini 4", "Argon"]],
-    [/^gpt-5\.6-sol-pro$/, ["GPT-5.6", "Sol Pro"]],
     [/^gemini-3\.8-flash$/, ["Gemini 3.8", "Flash"]],
     [/^gemini-3\.7-flash$/, ["Gemini 3.7", "Flash"]],
+    [/^gemini-3\.5-flash-lite$/, ["Gemini 3.5", "Flash-Lite"]],
+    [/^gemini-3\.1-pro.*$/, ["Gemini 3.1", "Pro"]],
     [/^muse-spark-1\.3-contributor$/, ["Muse Spark 1.3", "Contributor"]],
     [/^muse-spark-1\.3.*$/, ["Muse Spark 1.3", ""]],
     [/^muse-spark.*$/, ["Muse", "Spark"]],
-    [/^glm-5\.3-flash$/, ["GLM-5.3", "Flash"]],
+    [/^glm-5\.3-flash.*$/, ["GLM-5.3", "Flash"]],
     [/^glm-5\.3$/, ["GLM-5.3", ""]],
+    [/^grok-4\.7$/, ["Grok 4.7", ""]],
     [/^grok-4\.6$/, ["Grok 4.6", ""]],
     [/^kimi-k3$/, ["Kimi K3", ""]],
+    [/^kimi-k2.*$/, ["Kimi", "K2"]],
+    [/^qwen3\.8.*$/, ["Qwen3.8", ""]],
+    [/^qwen3\.7.*$/, ["Qwen3.7", ""]],
+    [/^qwen3\.6.*$/, ["Qwen3.6", ""]],
+    [/^qwen3\.5.*$/, ["Qwen3.5", ""]],
+    [/^mimo.*$/, ["MiMo", ""]],
+    [/^minimax-m3$/, ["MiniMax M3", ""]],
+    [/^step-5.*$/, ["Step 5", ""]],
+    [/^solar-mini.*$/, ["Solar", "Mini"]],
+    [/^solar-pro.*$/, ["Solar", "Pro"]],
+    [/^deepseek-v4.*$/, ["DeepSeek", "V4"]],
+    [/^(\w+)-(\d[\d.]*)-(.*)$/, null], // generic versioned fallback, handled below
   ];
-  for (const [re, parts] of map) if (re.test(slug)) return parts;
+  for (const [re, parts] of map) {
+    if (parts == null) { // generic versioned fallback: family-VERSION-rest
+      const m = slug.match(re);
+      if (m) return [m[1].toUpperCase() + " " + m[2], m[3].replace(/-/g, " ")];
+      continue;
+    }
+    if (re.test(slug)) return parts;
+  }
   const bits = slug.split("-");
   return [bits.slice(0, 2).join(" ").toUpperCase(), bits.slice(2).join(" ")];
 }
@@ -85,6 +125,7 @@ function cardExpl(key) {
 
 // Org colors (AA-style legend)
 function orgOf(id) {
+  if (id.startsWith("unmatched:")) return "New model";
   const o = id.split("/")[0].toLowerCase();
   if (o === "openai") return "OpenAI";
   if (o === "anthropic") return "Anthropic";

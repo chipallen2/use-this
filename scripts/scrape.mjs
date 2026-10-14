@@ -26,7 +26,59 @@ const round = (n, digits = 2) => Number(Number(n).toFixed(digits));
 
 const normalizeModelName = (name) =>
   name.toLowerCase().replaceAll("adaptive reasoning", "").replaceAll("effort", "")
-    .replace(/[()[\]]/g, " ").replace(/[-_]/g, " ").replace(/\s+/g, " ").trim();
+    .replaceAll("with fallback", "")
+    // Design Arena id prefix (its hyphen becomes a space below, so match
+    // "design arena:" post-normalization form here via two passes: first
+    // strip the raw prefix, then the normalized one).
+    .replace(/design-arena\s*:\s*/g, "")
+    .replace(/[()[\]]/g, " ").replace(/[-_:]/g, " ").replace(/\s+/g, " ").trim()
+    .replace(/^design arena\s+/, "");
+
+// Version-signature: canonical digit string of the FIRST version-like run
+// in a normalized name. Dots and separators are equivalent ("5.1" ≡
+// "5 1" ≡ "5-1"), so AA "Fable 5.1", DeepSWE "fable-5.1" and Design
+// Arena "claude-fable-5-1" all sign "51". Used by the version gate in
+// findOpenRouterModel: a needle carrying a version only matches an alias
+// carrying the SAME version ("opus 5" never takes "opus 5.5").
+// Returns null when neither side names a version (unversioned family).
+const versionSig = (normStr) => {
+  const toks = normStr.split(" ");
+  for (let i = 0; i < toks.length; i++) {
+    const t = toks[i];
+    if (/^[\d.]+$/.test(t) && /\d/.test(t)) { // pure version token: "5.5", "5", "1.3"
+      let sig = t.replace(/\./g, "");
+      // Absorb following pure-digit tokens: Design "5 1" -> "51".
+      let j = i + 1;
+      while (j < toks.length && /^\d+$/.test(toks[j])) { sig += toks[j]; j++; }
+      return sig || null;
+    }
+    const m = t.match(/\d[\d.]*/); // mixed token: "qwen3.8" -> "38", "120b" -> "120"
+    if (m) return m[0].replace(/\./g, "");
+  }
+  return null;
+};
+
+// Augmented token set: original tokens plus
+// - the dot-stripped form of dotted tokens ("5.5" -> "55"), and
+// - the concatenation of every run of consecutive pure-digit tokens
+//   ("5 1" -> "51"),
+// so dotted alias versions match separator-split leaderboard names
+// (Design Arena "claude-fable-5-1" -> tokens "5","1" -> "51").
+function tokenSet(normStr) {
+  const toks = normStr.split(" ").filter(Boolean);
+  const set = new Set(toks);
+  for (const t of toks) {
+    if (/^[\d.]+$/.test(t) && /\d/.test(t)) set.add(t.replace(/\./g, ""));
+  }
+  let run = "";
+  const flush = () => { if (run) { set.add(run); run = ""; } };
+  for (const t of toks) {
+    if (/^\d+$/.test(t)) run += t;
+    else flush();
+  }
+  flush();
+  return set;
+}
 
 const splitConfig = (raw) => {
   const match = raw.match(/^(.*?)\s*\[([^\]]+)]\s*$/);
@@ -55,76 +107,160 @@ async function getOpenRouterModels() {
   }));
 }
 
+// Alias table: [aliasKey, openRouterIdPrefix, {eval}].
+// aliasKey matches against the NORMALIZED AA/DeepSWE display name with TOKEN
+// BOUNDARIES - "gpt 6 sol" must NOT match "gpt 6.1 sol" even though one is
+// a substring of the other. Longest-key-first ordering is a second layer,
+// not the only defense: boundary + version-token checks (below) enforce it.
+// Version aliases MUST exist per released version ("opus 5.5" separate from
+// "opus 5"): a needle carrying a version token only matches an alias whose
+// key carries the SAME token.
+// Eval-style aliases (camellia, yoda, grogu, evergreen, solar-pro4-direct)
+// map to null: leaderboard-only rows, dropped with a loud log line (see
+// attachOpenRouter), never fuzzy-matched onto a real model.
+const MODEL_ALIASES = [
+  ["gpt-6-astra", "openai/gpt-6-astra"],
+  ["gpt-6-sol", "openai/gpt-6-sol"],
+  ["gpt-6.1-sol-pro", "openai/gpt-6.1-sol-pro"],
+  ["gpt-6.1-sol", "openai/gpt-6.1-sol"],
+  ["gpt-6-luna-pro", "openai/gpt-6-luna-pro"],
+  ["gpt-6-luna", "openai/gpt-6-luna"],
+  ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
+  ["gpt-5.6-sol", "openai/gpt-5.6-sol"],
+  ["gpt-5.6-luna-pro", "openai/gpt-5.6-luna-pro"],
+  ["gpt-5.6-luna", "openai/gpt-5.6-luna"],
+  ["gpt-5.6-terra", "openai/gpt-5.6-terra"],
+  ["gpt-5.5-pro", "openai/gpt-5.5-pro"],
+  ["gpt-5.5", "openai/gpt-5.5"],
+  ["gpt-5.3-codex", "openai/gpt-5.3-codex"],
+  ["gpt-oss-120b", "openai/gpt-oss-120b"],
+  ["gpt-oss-20b", "openai/gpt-oss-20b"],
+  ["claude-opus-5.5", "anthropic/claude-opus-5.5"],
+  ["claude-opus-5", "anthropic/claude-opus-5"],
+  ["claude-sonnet-5.5", "anthropic/claude-sonnet-5.5"],
+  ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
+  ["claude-haiku-5.5", "anthropic/claude-haiku-5.5"],
+  ["claude-fable-5.1", "anthropic/claude-fable-5.1"],
+  ["claude-fable-5", "anthropic/claude-fable-5"],
+  ["muse-wonder-full", "meta/muse-wonder"],
+  ["muse-wonder", "meta/muse-wonder"],
+  ["muse-glimmer", "meta/muse-glimmer-30b"],
+  ["gemini-4-argon", "google/gemini-4-argon"],
+  ["gemini-3.8-flash", "google/gemini-3.8-flash"],
+  ["gemini-3.7-flash", "google/gemini-3.7-flash"],
+  ["gemini-3.5-flash-lite", "google/gemini-3.5-flash-lite"],
+  ["gemini-3.1-pro", "google/gemini-3.1-pro-preview"],
+  ["gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite"],
+  ["gemini-2.5-flash", "google/gemini-2.5-flash"],
+  ["glm-5.3-flash", "z-ai/glm-5.3-flash"],
+  ["glm-5.3", "z-ai/glm-5.3"],
+  ["grok-4.7", "x-ai/grok-4.7"],
+  ["grok-4.6", "x-ai/grok-4.6"],
+  ["kimi-k3", "moonshotai/kimi-k3"],
+  ["qwen3.8-flash-next", "qwen/qwen3.8-flash-next"],
+  ["qwen3.8-max", "qwen/qwen3.8-max-0902"],
+  ["qwen3.8-27b", "qwen/qwen3.8-27b"],
+  ["qwen3.8", "qwen/qwen3.8-max-0902"],
+  ["qwen3.7-plus", "qwen/qwen3.7-plus"],
+  ["qwen3.7-max", "qwen/qwen3.7-max"],
+  ["qwen3.6", "qwen/qwen3.6-35b-a3b"],
+  ["qwen3.5", "qwen/qwen3.5-122b-a10b"],
+  ["mimo-v2.6-pro", "xiaomi/mimo-v2.6-pro"],
+  ["minimax-m3", "minimax/minimax-m3"],
+  ["step-5", "stepfun/step-5-preview"],
+  ["solar-mini-4", "upstage/solar-mini4"],
+  ["solar-pro-4", "upstage/solar-pro4"],
+  ["deepseek-v4.1-flash", "deepseek/deepseek-v4.1-flash"],
+  ["deepseek-v4-pro", "deepseek/deepseek-v4-pro-0813"],
+  ["deepseek-v4", "deepseek/deepseek-v4-pro-0813"],
+  ["gpt-5.6-sol-xhigh", "openai/gpt-5.6-sol"],
+  ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
+  ["muse-spark-1.3-max", "meta/muse-spark-1.3"],
+  ["muse-spark-1.3-contributor", "meta/muse-spark-1.3-contributor"],
+  ["muse-spark-1.3", "meta/muse-spark-1.3"],
+  ["muse-spark-1.2-contributor", "meta/muse-spark-1.2-contributor"],
+  ["muse-spark-1.2", "meta/muse-spark-1.2"],
+  ["muse-spark-1.1", "meta/muse-spark-1.1"],
+  ["kimi-k2.7-code", "moonshotai/kimi-k2.7-code"],
+  ["muse-spark", "meta/muse-spark"],
+  // Leaderboard-only / eval names: NEVER match a real model. Dropped loudly.
+  ["camellia", null],
+  ["solar-pro4-direct", null],
+  ["yoda", null],
+  ["evergreen", null],
+  ["grogu", null],
+];
+
+const normKey = (k) => k.toLowerCase().replace(/[-_]/g, " ");
+
+// Token-boundary match: every token of the alias key must appear in the
+// needle as a WHOLE token ("gpt 6 sol" does not match "gpt 6.1 sol",
+// "opus 5" does not match "opus 5.5"), where a digit-run in the needle
+// ("5 1") also satisfies the concatenation (alias "5.1"), covering
+// Design Arena's separator-split ids ("claude-fable-5-1").
+function aliasHits(keyNorm, needleNorm) {
+  const have = tokenSet(needleNorm);
+  return keyNorm.split(" ").every((tok) => {
+    if (/^[\d.]+$/.test(tok) && /\d/.test(tok)) return have.has(tok.replace(/\./g, ""));
+    const m = tok.match(/\d[\d.]*/);
+    if (m) return have.has(tok) || have.has(m[0].replace(/\./g, ""));
+    return have.has(tok);
+  });
+}
+
+// Match result: { kind: "alias"|"eval"|"unmatched", model }.
+// - "alias": found via the alias table (boundary + version-gated).
+// - "eval": leaderboard-only name (camellia, yoda, ...) - caller drops it.
+// - "unmatched": zero alias hits. NO fuzzy fallback: the old word-score
+//   fallback is what silently labeled Opus 5.5 as Opus 5 (and would label
+//   GPT-6.1 Sol as GPT-6 Sol, Grok 4.7 as Grok 4.6, ...). Callers keep the
+//   raw AA display name as its own pool entry (score + AA price intact)
+//   via toUnmatchedEntry(), so unknown models show truthfully instead of
+//   masquerading as an older sibling.
 function findOpenRouterModel(modelName, openRouterModels) {
   const needle = normalizeModelName(modelName);
-  const aliases = [
-    ["gpt-6-astra", "openai/gpt-6-astra"],
-    ["gpt-6-sol", "openai/gpt-6-sol"],
-    ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
-    ["gpt-5.6-sol", "openai/gpt-5.6-sol"],
-    ["gpt-5.6-luna-pro", "openai/gpt-5.6-luna-pro"],
-    ["gpt-5.6-luna", "openai/gpt-5.6-luna"],
-    ["gpt-5.6-terra", "openai/gpt-5.6-terra"],
-    ["gpt-5.5-pro", "openai/gpt-5.5-pro"],
-    ["claude-opus-5.5", "anthropic/claude-opus-5.5"],
-    ["claude-opus-5", "anthropic/claude-opus-5"],
-    ["claude-sonnet-5.5", "anthropic/claude-sonnet-5.5"],
-    ["claude-sonnet-5", "anthropic/claude-sonnet-5"],
-    ["claude-haiku-5.5", "anthropic/claude-haiku-5.5"],
-    ["claude-fable-5.1", "anthropic/claude-fable-5.1"],
-    ["claude-fable-5", "anthropic/claude-fable-5"],
-    ["muse-wonder", "meta/muse-wonder"],
-    ["gemini-4-argon", "google/gemini-4-argon"],
-    ["gemini-3.8-flash", "google/gemini-3.8-flash"],
-    ["gemini-3.7-flash", "google/gemini-3.7-flash"],
-    ["gemini-2.5-flash-lite", "google/gemini-2.5-flash-lite"],
-    ["gemini-2.5-flash", "google/gemini-2.5-flash"],
-    ["glm-5.3-flash", "z-ai/glm-5.3-flash"],
-    ["glm-5.3", "z-ai/glm-5.3"],
-    ["grok-4.6", "x-ai/grok-4.6"],
-    ["kimi-k3", "moonshotai/kimi-k3"],
-    ["qwen3.8-flash-next", "qwen/qwen3.8-flash-next"],
-    ["qwen3.8-max", "qwen/qwen3.8-max-0902"],
-    ["qwen3.8", "qwen/qwen3.8-max-0902"],
-    ["minimax-m3", "minimax/minimax-m3"],
-    ["gpt-5.6-sol-xhigh", "openai/gpt-5.6-sol"],
-    ["gpt-5.6-sol-pro", "openai/gpt-5.6-sol-pro"],
-    ["muse-spark-1.3-max", "meta/muse-spark-1.3"],
-    ["muse-spark-1.3-contributor", "meta/muse-spark-1.3-contributor"],
-    ["muse-spark-1.3", "meta/muse-spark-1.3"],
-    ["muse-spark-1.2-contributor", "meta/muse-spark-1.2-contributor"],
-    ["muse-spark-1.2", "meta/muse-spark-1.2"],
-    ["muse-spark-1.1", "meta/muse-spark-1.1"],
-    ["kimi-k2.7-code", "moonshotai/kimi-k2.7-code"],
-    ["qwen3.7-max", "qwen/qwen3.7-max"],
-    ["camellia", null],
-    ["solar-pro4-direct", null],
-    ["yoda", null],
-    ["evergreen", null],
-    ["grogu", null],
-    ["deepseek-v4-pro", "deepseek/deepseek-v4-pro"],
-    ["muse-spark", "meta/muse-spark"],
-  ];
-  const normKey = (k) => k.toLowerCase().replace(/[-_]/g, " ");
-  // Longest alias key first so "muse-spark-1.3-contributor" beats "muse-spark-1.3".
-  const ordered = [...aliases].sort((a, b) => b[0].length - a[0].length);
+  const needleVer = versionSig(needle);
+  // Longest alias key first so "muse spark 1.3 contributor" beats "muse spark 1.3".
+  const ordered = [...MODEL_ALIASES].sort((a, b) => b[0].length - a[0].length);
   for (const [key, idPrefix] of ordered) {
-    if (!idPrefix) continue; // unmapped leaderboard-only names (camellia, yoda, ...)
-    if (needle.includes(normKey(key))) {
-      // Exact-ID match wins over prefix match: "meta/muse-spark-1.3" must
-      // not resolve to its "-contributor" twin (or vice versa).
-      const exact = openRouterModels.find((m) => m.id === idPrefix);
-      if (exact) return exact;
-      const hit = openRouterModels.find((m) => m.id.startsWith(`${idPrefix}`));
-      if (hit) return hit;
-    }
+    const keyNorm = normKey(key);
+    if (!aliasHits(keyNorm, needle)) continue;
+    // Version gate: if BOTH sides carry a version signature, they must
+    // agree - "opus 5" never takes "opus 5.5" (6ef57f5 regression),
+    // "grok 4.6" never takes "grok 4.7". No signature on either side =
+    // unversioned family name, matches freely.
+    // One-sided version: a needle WITH a version only matches an alias
+    // WITHOUT one when the alias is the family's canonical first release
+    // ("Muse Wonder" v1 is just "Muse Wonder"); a needle WITHOUT a
+    // version must NOT match a versioned alias ("GPT-6 Sol" must not hit
+    // "gpt-6.1-sol" - substring trap). In both one-sided cases, skip.
+    const keyVer = versionSig(keyNorm);
+    if ((needleVer || keyVer) && needleVer !== keyVer) continue;
+    if (idPrefix == null) return { kind: "eval", model: null };
+    // Exact-ID match wins over prefix match: "meta/muse-spark-1.3" must
+    // not resolve to its "-contributor" twin (or vice versa).
+    const exact = openRouterModels.find((m) => m.id === idPrefix);
+    if (exact) return { kind: "alias", model: exact };
+    const hit = openRouterModels.find((m) => m.id.startsWith(`${idPrefix}`));
+    if (hit) return { kind: "alias", model: hit };
   }
-  const words = needle.replace(/claude|gpt|gemini|grok|glm|kimi|qwen|deepseek/g, "").split(" ").filter((x) => x.length >= 2);
-  return openRouterModels.map((model) => {
-    const haystack = normalizeModelName(`${model.id} ${model.name}`);
-    const matches = words.filter((word) => haystack.includes(word)).length;
-    return { model, score: words.length ? matches / words.length : 0 };
-  }).sort((a, b) => b.score - a.score)[0]?.model;
+  return { kind: "unmatched", model: null };
+}
+
+// Pool entry for an unknown model: keeps the raw AA display name as the
+// model label, the AA score, and the AA $/task price (no per-1M rates -
+// price displays from costPerTask). openRouterId is a synthetic
+// "unmatched:<slug>" marker so dedupe/candidates/picks treat it as its
+// own model, and the guard can find every such entry by prefix.
+// effortSupported is true (nothing to contradict the AA effort label).
+function toUnmatchedEntry(candidate) {
+  const slug = normalizeModelName(candidate.model).replace(/\s+/g, "-").slice(0, 60) || "unknown";
+  return {
+    ...candidate,
+    openRouterId: `unmatched:${slug}`,
+    effortSupported: true,
+    unmatched: true,
+  };
 }
 
 function effortIsSupported(candidate, openRouterModel) {
@@ -254,17 +390,42 @@ async function scrapeIntelligenceIndex(browser) {
 function attachOpenRouter(results, openRouterModels) {
   // Dedupe on canonical key (openRouterId + effort), keeping the best score -
   // the AA board can list the same model twice (e.g. duplicate rows).
+  // Resolution outcomes per row:
+  // - alias hit: normal entry with OpenRouter pricing.
+  // - eval name (camellia, yoda, ...): DROPPED with a loud log line.
+  // - unmatched (new model, no alias yet): KEPT as its own entry under a
+  //   synthetic "unmatched:<slug>" id (AA score + AA $/task intact, raw AA
+  //   name displayed). Never forced onto the closest old alias - that
+  //   mislabeling is the bug this hardening kills. The fail-loud guards in
+  //   main() catch unmatched TOP models; the console log below gives the
+  //   one-line alias to add for everything else.
+  const evalDropped = [];
   const best = new Map();
   for (const candidate of results) {
-    const openRouter = findOpenRouterModel(candidate.model, openRouterModels);
-    const out = { ...candidate, openRouterId: openRouter?.id ?? null, effortSupported: effortIsSupported(candidate, openRouter) };
-    if (openRouter) {
-      out.orPromptPerMillion = openRouter.promptPerMillion;
-      out.orCompletionPerMillion = openRouter.completionPerMillion;
+    const res = findOpenRouterModel(candidate.model, openRouterModels);
+    let out;
+    if (res.kind === "alias") {
+      const openRouter = res.model;
+      out = { ...candidate, openRouterId: openRouter?.id ?? null, effortSupported: effortIsSupported(candidate, openRouter) };
+      if (openRouter) {
+        out.orPromptPerMillion = openRouter.promptPerMillion;
+        out.orCompletionPerMillion = openRouter.completionPerMillion;
+      }
+    } else if (res.kind === "eval") {
+      evalDropped.push(candidate.rawName);
+      continue;
+    } else {
+      out = toUnmatchedEntry(candidate);
     }
     if (!out.openRouterId || !out.effortSupported) continue;
     const k = out.openRouterId + "|" + (out.effort ?? "default");
     if (!best.has(k) || out.score > best.get(k).score) best.set(k, out);
+  }
+  if (evalDropped.length) console.log(`eval names dropped (leaderboard-only, no model): ${[...new Set(evalDropped)].join(" | ")}`);
+  const unmatchedKept = [...best.values()].filter((x) => x.openRouterId.startsWith("unmatched:"));
+  if (unmatchedKept.length) {
+    console.log(`UNMATCHED MODELS KEPT AS OWN ENTRIES (${unmatchedKept.length}) - add aliases:`);
+    for (const u of unmatchedKept) console.log(`  UNMATCHED: "${u.rawName}" -> openRouterId=${u.openRouterId}`);
   }
   return [...best.values()];
 }
@@ -448,24 +609,29 @@ async function main() {
   failLoud(!agentPool.length, "AA agent pool empty after OpenRouter attach (all rows unmatched?)");
   failLoud(!deepSWERaw.length, "DeepSWE scrape returned 0 rows");
   failLoud(!coding.length, "coding pool empty after blend");
-  // Alias-coverage guard: detect rows the pool actually LOST. A row is
-  // lost when its raw name never made it into the pool at all - neither
-  // as its own slot nor merged by dedupe. Compare normalized raw names
-  // against the pool: entries whose model text has no pool counterpart
-  // were dropped by attachOpenRouter (unknown model or unsupported
-  // effort). If a large share drop, model-name drift (new 5.5-style
-  // versions, renamed models) is silently losing real contenders - fail
-  // instead of deploying a pool that lost them.
-  const poolModels = new Set(agentPool.map((x) => normalizeModelName(x.model)));
-  const dropped = intelligenceRaw.filter(
-    (c) => ![...poolModels].some((pm) => pm.includes(normalizeModelName(c.model)) || normalizeModelName(c.model).includes(pm)),
+  // Unmatched-model guards: unknown AA names are KEPT as their own entries
+  // (see toUnmatchedEntry), so they can never silently mislabel as an old
+  // model. But an unmatched model carrying a stale AA price and no
+  // OpenRouter rates must not WIN a card or crack the top ranks undected:
+  // - any WINNER unmatched -> fail (a card would show a synthetic id).
+  // - any unmatched entry in the agent top-10 by score -> fail (a new
+  //   frontier model needs a one-line alias, not a quiet week).
+  // - >50% of the agent pool unmatched -> fail (wholesale renames = stop).
+  //   (Long-tail AA rows with no OpenRouter listing - Mistral previews,
+  //   eval snapshots, tiny open models - are EXPECTED unmatched; the live
+  //   2026-10-14 pool runs ~40%. The top-10 guard above is the sharp one.)
+  // CI output logs every unmatched name (attachOpenRouter UNMATCHED lines),
+  // so the fix is always: add one alias row, re-run.
+  const unmatchedAgent = agentPool.filter((x) => x.openRouterId.startsWith("unmatched:"));
+  const topAgent = [...agentPool].sort((a, b) => b.score - a.score).slice(0, 10);
+  const topUnmatched = topAgent.filter((x) => x.openRouterId.startsWith("unmatched:"));
+  failLoud(
+    topUnmatched.length > 0,
+    `${topUnmatched.length} unmatched model(s) in agent top-10 (add MODEL_ALIASES rows): ${topUnmatched.map((x) => x.rawName).join(" | ")}`,
   );
   failLoud(
-    dropped.length > Math.ceil(intelligenceRaw.length * 0.15),
-    `${dropped.length}/${intelligenceRaw.length} AA rows lost before the pool (sample: ${dropped
-      .slice(0, 3)
-      .map((c) => c.rawName)
-      .join(" | ")})`,
+    unmatchedAgent.length > Math.ceil(agentPool.length * 0.5),
+    `${unmatchedAgent.length}/${agentPool.length} agent pool entries unmatched (sample: ${unmatchedAgent.slice(0, 3).map((x) => x.rawName).join(" | ")})`,
   );
 
   // Agent frontier: best score among reasonably priced (<= $3/task), per selector discipline
@@ -484,6 +650,7 @@ async function main() {
     confidence: x.confidence ?? null, costPerTask: x.costPerTask,
     outputTokens: x.outputTokens ?? null, steps: x.steps ?? null,
     speed: x.speed ?? null, openRouterId: x.openRouterId,
+    rawName: x.rawName ?? null, unmatched: x.unmatched ?? false,
     sources: x.sources ?? null, deepScore: x.deepScore ?? null,
     deepRaw: x.deepRaw ?? null,
     designScore: x.designScore ?? null, designElo: x.designElo ?? null,
@@ -493,6 +660,15 @@ async function main() {
   const agentElig = pickCheapestAbove(agentPool, agentCutoff);
   const everydayElig = pickCheapestAbove(coding, everydayCutoff);
   const hardElig = pickCheapestAbove(coding, hardCutoff);
+  // An unmatched model must never WIN a card: its price is an AA guess and
+  // its id is synthetic. Fail so a human adds the alias instead of the
+  // site showing an "unmatched:..." model.
+  for (const [label, elig] of [["agent", agentElig], ["everyday", everydayElig], ["hard", hardElig]]) {
+    failLoud(
+      elig[0].openRouterId.startsWith("unmatched:"),
+      `${label} winner is unmatched (add MODEL_ALIASES row): ${elig[0].rawName}`,
+    );
+  }
 
   const picks = {
     // Date stamped in America/Los_Angeles (Chip's tz) so the "Picks for" label matches the calendar day he sees.
@@ -517,4 +693,10 @@ async function main() {
   console.log(`HARD: ${picks.hard.winner.openRouterId} - ${picks.hard.winner.effort}`);
 }
 
-main().catch((error) => { console.error(error); process.exit(1); });
+const SHOULD_RUN = process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop());
+if (SHOULD_RUN) main().catch((error) => { console.error(error); process.exit(1); });
+
+// Test seam: matcher unit tests import the pure alias machinery without
+// launching a browser. `node --test tests/matcher.test.mjs` exercises
+// boundary/version/unmatched behavior against fake OpenRouter catalogs.
+export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter };
