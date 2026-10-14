@@ -534,7 +534,10 @@ function attachOpenRouter(results, openRouterModels) {
   const unmatchedKept = [...best.values()].filter((x) => x.openRouterId.startsWith("unmatched:"));
   if (unmatchedKept.length) {
     console.log(`UNMATCHED MODELS KEPT AS OWN ENTRIES (${unmatchedKept.length}) - add aliases:`);
-    for (const u of unmatchedKept) console.log(`  UNMATCHED: "${u.rawName}" -> openRouterId=${u.openRouterId}`);
+    for (const u of unmatchedKept) {
+      const suggested = normalizeModelName(u.model).replace(/\s+/g, "-");
+      console.log(`  UNMATCHED: "${u.rawName}" -> ${u.openRouterId} | suggested alias key: "${suggested}" (pair with its OpenRouter id)`);
+    }
   }
   return [...best.values()];
 }
@@ -675,6 +678,26 @@ function pickCheapestAbove(candidates, cutoff) {
   return eligible;
 }
 
+const isUnmatched = (x) => x.openRouterId?.startsWith("unmatched:");
+
+// Graceful winner selection (2026-10-14): an unmatched model carrying a
+// synthetic id and an AA-guess price must never headline a card. Prefer
+// the cheapest MATCHED model above cutoff; if every eligible model is
+// unmatched (brand-new frontier week), take the cheapest unmatched rather
+// than throwing - the card then shows the raw AA name with the NEW tag.
+// Pure function, unit-tested below.
+function pickCheapestMatched(candidates, cutoff) {
+  const eligible = pickCheapestAbove(candidates, cutoff);
+  const matched = eligible.filter((x) => !isUnmatched(x));
+  if (matched.length) {
+    const skipped = eligible.filter(isUnmatched);
+    if (skipped.length) console.warn(`SCRAPE WARNING (deploying anyway): skipped ${skipped.length} unmatched above-cutoff model(s) for winner: ${skipped.map((x) => x.rawName).join(" | ")}`);
+    return matched;
+  }
+  console.warn(`SCRAPE WARNING (deploying anyway): all ${eligible.length} above-cutoff models unmatched - winner shows NEW tag: ${eligible[0].rawName}`);
+  return eligible;
+}
+
 async function main() {
   console.log("Fetching OpenRouter...");
   const openRouterModels = await getOpenRouterModels();
@@ -714,58 +737,64 @@ async function main() {
   const coding = dedupeByModel(addContributorTwins(blendCodingScores(deepSWEPool, designPool), openRouterModels));
   const agentPool = dedupeByModel(addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels));
 
-  // FAIL LOUD, never silently deploy stale data as fresh. A scrape that
+  // GRACEFUL, never silently deploy stale data as fresh. A scrape that
   // returns an empty pool (AA changed markup, network hiccup, API drift)
   // must break the run with a non-zero exit so CI fails, the lease stays
   // uncompleted, last_calc is never stamped, and no deploy happens.
+  // Everything else degrades gracefully (see warnBelow): unknown models
+  // are KEPT as their own NEW entries (toUnmatchedEntry) and the deploy
+  // ALWAYS succeeds, so the site never stops working on new model names.
   const failLoud = (cond, msg) => { if (cond) { console.error("SCRAPE GUARD FAILED: " + msg); process.exit(1); } };
+  // warnLoud: loud CI log line (visible in Actions output) that does NOT
+  // fail the run. Unmatched-model conditions use this: the site deploys
+  // with NEW-tagged entries and the alias gets added next cycle.
+  const warnLoud = (cond, msg) => {
+    if (!cond) return;
+    console.warn("SCRAPE WARNING (deploying anyway): " + msg);
+  };
+  const unmatchedSummary = (list) => list.map((x) => `${x.rawName} -> ${x.openRouterId}`).join(" | ");
   failLoud(!intelligenceRaw.length, "AA Intelligence Index scrape returned 0 rows");
   failLoud(!agentPool.length, "AA agent pool empty after OpenRouter attach (all rows unmatched?)");
   failLoud(!deepSWERaw.length, "DeepSWE scrape returned 0 rows");
   failLoud(designArenaFailed, "Design Arena fetch failed - refusing DeepSWE-only deploy (stale-board cause 2026-10-14)");
   failLoud(!designArenaRaw.length, "Design Arena scrape returned 0 rows");
   failLoud(!coding.length, "coding pool empty after blend");
-  // Unmatched-model guards: unknown AA names are KEPT as their own entries
-  // (see toUnmatchedEntry), so they can never silently mislabel as an old
-  // model. But an unmatched model carrying a stale AA price and no
-  // OpenRouter rates must not WIN a card or crack the top ranks undected:
-  // - any WINNER unmatched -> fail (a card would show a synthetic id).
-  // - any unmatched entry in the agent top-10 by score -> fail (a new
-  //   frontier model needs a one-line alias, not a quiet week).
-  // - >50% of the agent pool unmatched -> fail (wholesale renames = stop).
-  //   (Long-tail AA rows with no OpenRouter listing - Mistral previews,
-  //   eval snapshots, tiny open models - are EXPECTED unmatched; the live
-  //   2026-10-14 pool runs ~40%. The top-10 guard above is the sharp one.)
-  // CI output logs every unmatched name (attachOpenRouter UNMATCHED lines),
-  // so the fix is always: add one alias row, re-run.
-  // CODING SIDE (2026-10-14): same treatment for the blended coding pool -
-  // the coding top-10 is where the Gemini-3.5-Flash-on-Qwen-3.5 mislabel
-  // sat undetected for weeks. Coding long-tail unmatched (dated snapshots
+  // Unmatched-model policy (GRACEFUL, 2026-10-14): unknown AA names are
+  // KEPT as their own NEW-tagged entries (see toUnmatchedEntry), so they
+  // can never silently mislabel as an old model. Guards below are WARNINGS
+  // (warnLoud), never build-breakers: the deploy always succeeds with NEW
+  // models present, and unmatched winners are skipped in favor of the next
+  // cheapest matched model (see pickCheapestMatched). CI output logs every
+  // unmatched name, so the fix is always: add one alias row, re-run.
+  // CODING SIDE: same treatment for the blended coding pool - the coding
+  // top-10 is where the Gemini-3.5-Flash-on-Qwen-3.5 mislabel sat
+  // undetected for weeks. Coding long-tail unmatched (dated snapshots
   // like claude-opus-4-5-20251101, grok-4.20-0309-reasoning, gemini
-  // previews with no released OR listing) is expected; the top-10 guard
-  // is the sharp one.
+  // previews with no released OR listing) is expected; the top-10
+  // warning is the sharp one.
   const unmatchedCoding = coding.filter((x) => x.openRouterId.startsWith("unmatched:"));
   const topCoding = [...coding].sort((a, b) => b.score - a.score).slice(0, 10);
   const topCodingUnmatched = topCoding.filter((x) => x.openRouterId.startsWith("unmatched:"));
-  failLoud(
+  warnLoud(
     topCodingUnmatched.length > 0,
-    `${topCodingUnmatched.length} unmatched model(s) in coding top-10 (add MODEL_ALIASES rows): ${topCodingUnmatched.map((x) => x.rawName).join(" | ")}`,
+    `${topCodingUnmatched.length} unmatched model(s) in coding top-10 (add MODEL_ALIASES rows): ${unmatchedSummary(topCodingUnmatched)}`,
   );
-  failLoud(
+  warnLoud(
     unmatchedCoding.length > Math.ceil(coding.length * 0.5),
-    `${unmatchedCoding.length}/${coding.length} coding pool entries unmatched (sample: ${unmatchedCoding.slice(0, 3).map((x) => x.rawName).join(" | ")})`,
-  );
+    `${unmatchedCoding.length}/${coding.length} coding pool entries unmatched (sample: ${unmatchedSummary(unmatchedCoding.slice(0, 3))})`,
+  ); // pool-level note, never a breaker
   const unmatchedAgent = agentPool.filter((x) => x.openRouterId.startsWith("unmatched:"));
   const topAgent = [...agentPool].sort((a, b) => b.score - a.score).slice(0, 10);
   const topUnmatched = topAgent.filter((x) => x.openRouterId.startsWith("unmatched:"));
-  failLoud(
+  warnLoud(
     topUnmatched.length > 0,
-    `${topUnmatched.length} unmatched model(s) in agent top-10 (add MODEL_ALIASES rows): ${topUnmatched.map((x) => x.rawName).join(" | ")}`,
+    `${topUnmatched.length} unmatched model(s) in agent top-10 (add MODEL_ALIASES rows): ${unmatchedSummary(topUnmatched)}`,
   );
-  failLoud(
+  warnLoud(
     unmatchedAgent.length > Math.ceil(agentPool.length * 0.5),
-    `${unmatchedAgent.length}/${agentPool.length} agent pool entries unmatched (sample: ${unmatchedAgent.slice(0, 3).map((x) => x.rawName).join(" | ")})`,
+    `${unmatchedAgent.length}/${agentPool.length} agent pool entries unmatched (sample: ${unmatchedSummary(unmatchedAgent.slice(0, 3))})`,
   );
+  console.log(`NEW MODEL SUMMARY: ${unmatchedAgent.length} unmatched in agent pool, ${unmatchedCoding.length} unmatched in coding pool`);
 
   // Agent frontier: best score among reasonably priced (<= $3/task), per selector discipline
   const reasonablyPriced = agentPool.filter((x) => x.costPerTask <= 3);
@@ -790,18 +819,9 @@ async function main() {
     daPricePerMillion: x.daPricePerMillion ?? null,
   });
 
-  const agentElig = pickCheapestAbove(agentPool, agentCutoff);
-  const everydayElig = pickCheapestAbove(coding, everydayCutoff);
-  const hardElig = pickCheapestAbove(coding, hardCutoff);
-  // An unmatched model must never WIN a card: its price is an AA guess and
-  // its id is synthetic. Fail so a human adds the alias instead of the
-  // site showing an "unmatched:..." model.
-  for (const [label, elig] of [["agent", agentElig], ["everyday", everydayElig], ["hard", hardElig]]) {
-    failLoud(
-      elig[0].openRouterId.startsWith("unmatched:"),
-      `${label} winner is unmatched (add MODEL_ALIASES row): ${elig[0].rawName}`,
-    );
-  }
+  const agentElig = pickCheapestMatched(agentPool, agentCutoff);
+  const everydayElig = pickCheapestMatched(coding, everydayCutoff);
+  const hardElig = pickCheapestMatched(coding, hardCutoff);
 
   const picks = {
     // Date stamped in America/Los_Angeles (Chip's tz) so the "Picks for" label matches the calendar day he sees.
@@ -832,4 +852,4 @@ if (SHOULD_RUN) main().catch((error) => { console.error(error); process.exit(1);
 // Test seam: matcher unit tests import the pure alias machinery without
 // launching a browser. `node --test tests/matcher.test.mjs` exercises
 // boundary/version/unmatched behavior against fake OpenRouter catalogs.
-export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, blendCodingScores, medianUsageTokens, addContributorTwins };
+export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, blendCodingScores, medianUsageTokens, addContributorTwins, pickCheapestAbove, pickCheapestMatched, isUnmatched };

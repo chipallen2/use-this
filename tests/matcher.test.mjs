@@ -18,6 +18,9 @@ import {
   attachOpenRouter,
   blendCodingScores,
   medianUsageTokens,
+  pickCheapestAbove,
+  pickCheapestMatched,
+  isUnmatched,
 } from "../scripts/scrape.mjs";
 
 // Minimal fake OpenRouter catalog: id (+ pricing fields the matcher reads).
@@ -234,4 +237,56 @@ test("coding: blended pool carries both signals, design-only priced at scale", (
   const usage = medianUsageTokens(deep);
   assert.ok(usage > 0, "median usage positive");
   assert.ok(Math.abs(only.costPerTask - (2.225 * usage) / 1_000_000) < 0.015, `cost scaled to usage: ${only.costPerTask}`);
+});
+
+// ---- 2026-10-14 graceful degradation: new models never break the build ----
+// Fake future models (Opus 6, GPT-7) flow through attachOpenRouter as their
+// own NEW entries (score + price intact, no mislabel), and winner selection
+// prefers matched models while still deploying when everything is unknown.
+test("graceful: fake future Opus 6 + GPT-7 deploy as NEW, never mislabeled", () => {
+  const rows = [
+    { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 58, costPerTask: 5.98 },
+    { rawName: "Claude Opus 6 (max)", model: "Claude Opus 6", effort: "max", score: 64, costPerTask: 7.5 },
+    { rawName: "GPT-7 Astra (max)", model: "GPT-7 Astra", effort: "max", score: 62, costPerTask: 6.0 },
+  ];
+  const pool = attachOpenRouter(rows, CATALOG);
+  const news = pool.filter(isUnmatched);
+  assert.equal(news.length, 2, "both future models kept as own entries");
+  const opus6 = news.find((x) => x.model === "Claude Opus 6");
+  assert.ok(opus6, "Opus 6 present under its own name");
+  assert.equal(opus6.score, 64);
+  assert.equal(opus6.costPerTask, 7.5);
+  assert.ok(!pool.some((x) => x.model === "Claude Opus 6" && x.openRouterId === "anthropic/claude-opus-5.5"), "Opus 6 NOT collapsed onto Opus 5.5");
+  const gpt7 = news.find((x) => x.model === "GPT-7 Astra");
+  assert.ok(gpt7, "GPT-7 present under its own name");
+  assert.ok(gpt7.openRouterId.startsWith("unmatched:"), "synthetic id");
+});
+
+test("graceful: winner skips unmatched for cheapest matched", () => {
+  // Opus 6 is cheapest above cutoff but unknown -> winner is matched Opus 5.5.
+  const pool = attachOpenRouter([
+    { rawName: "Claude Opus 6 (max)", model: "Claude Opus 6", effort: "max", score: 64, costPerTask: 1.0 },
+    { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 58, costPerTask: 5.98 },
+  ], CATALOG);
+  const elig = pickCheapestMatched(pool, 50);
+  assert.equal(elig[0].openRouterId, "anthropic/claude-opus-5.5", "matched winner, unmatched skipped");
+  assert.ok(!isUnmatched(elig[0]));
+});
+
+test("graceful: all-unmatched pool still picks a winner (NEW tag path)", () => {
+  const pool = attachOpenRouter([
+    { rawName: "Claude Opus 6 (max)", model: "Claude Opus 6", effort: "max", score: 64, costPerTask: 7.5 },
+    { rawName: "GPT-7 Astra (max)", model: "GPT-7 Astra", effort: "max", score: 62, costPerTask: 6.0 },
+  ], CATALOG);
+  assert.ok(pool.every(isUnmatched), "everything unknown");
+  const elig = pickCheapestMatched(pool, 50);
+  assert.equal(elig[0].model, "GPT-7 Astra", "cheapest unknown wins instead of throwing");
+  assert.ok(elig[0].openRouterId.startsWith("unmatched:"), "card renders via NEW-tag path");
+});
+
+test("graceful: empty cutoff still throws (real data problem, not new models)", () => {
+  const pool = attachOpenRouter([
+    { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 10, costPerTask: 5.98 },
+  ], CATALOG);
+  assert.throws(() => pickCheapestMatched(pool, 50), /No eligible model/, "no eligible model still fails loud");
 });
