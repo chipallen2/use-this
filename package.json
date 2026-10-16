@@ -7,7 +7,8 @@
     "scrape": "node scripts/scrape.mjs data",
     "render": "node scripts/render.mjs data dist/index.html",
     "build": "node scripts/render.mjs data dist/index.html",
-    "test": "node --test tests/recalc.test.mjs tests/matcher.test.mjs"
+    "test": "node --test tests/recalc.test.mjs tests/matcher.test.mjs",
+    "test:e2e": "node --test tests/e2e.test.mjs"
   },
   "engines": {
     "node": ">=20"

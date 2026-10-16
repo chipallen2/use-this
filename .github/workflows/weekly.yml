@@ -63,6 +63,14 @@ jobs:
           date -u +%Y-%m-%dT%H:%M:%SZ > /tmp/calc_utc.txt
           node -e 'const fs=require("fs");const s=fs.readFileSync("/tmp/calc_utc.txt","utf8").trim();const p=JSON.parse(fs.readFileSync("data/picks.json","utf8"));fs.writeFileSync("data/calc.json",JSON.stringify({calc_utc:s,data_date:p.date},null,2)+"\n");console.log("calc.json:",s);'
           npm run render
+          # Fail-loud guard (Root Cause A, 2026-10-16): a missing/empty
+          # RECALC_URL secret must NEVER deploy a dead refresh button.
+          # render.mjs also refuses placeholders itself; this is the CI belt
+          # to that suspender, with the explicit secret-focused message.
+          if grep -q RECALC_URL_PLACEHOLDER dist/index.html; then
+            echo 'RECALC_URL secret empty or unset - failing loudly' >&2
+            exit 1
+          fi
       - name: Commit if changed
         if: env.UT_SKIP != '1'
         run: |
@@ -112,11 +120,16 @@ jobs:
         # LAST step, only after the real recompute is live: scrape + render +
         # commit + push + deploy ALL green above, AND the canonical
         # data-calc.json fetched from production matches the local stamp.
-        # Failure anywhere above skips this - last_calc is never stamped on
-        # a failed run (no mtime poisoning). Lease ownership is enforced
-        # atomically INSIDE the complete RPC (wrong/stale/expired lease ->
-        # 409, last_calc untouched) - no separate pre-check, which would
-        # race anyway. A 409 here fails the job loudly; the 2h TTL backstops.
+        # Verification uses scripts/ci/ut-verify.mjs: cache-busted fetches
+        # with bounded retries (deployment/CDN propagation can lag the
+        # alias re-point by minutes - the Oct 13/14 failures verified once
+        # immediately after alias and died on stale edge cache). A placeholder
+        # baked endpoint fails loudly, never passes. Failure anywhere above
+        # skips this - last_calc is never stamped on a failed run (no mtime
+        # poisoning). Lease ownership is enforced atomically INSIDE the
+        # complete RPC (wrong/stale/expired lease -> 409, last_calc
+        # untouched) - no separate pre-check, which would race anyway. A 409
+        # here fails the job loudly; the 2h TTL backstops.
         if: env.UT_SKIP != '1' && success()
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -126,14 +139,8 @@ jobs:
           set -euo pipefail
           export CALC_UTC=$(node -e 'console.log(JSON.parse(require("fs").readFileSync("data/calc.json","utf8")).calc_utc)')
           export PICKS_SHA=$(node -e 'console.log(require("crypto").createHash("sha256").update(require("fs").readFileSync("data/picks.json")).digest("hex").slice(0,12))')
-          LIVE_CALC_RAW=$(curl -fsS "https://usethismodel.vercel.app/data-calc.json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).calc_utc))')
-          LIVE_CALC=$(node -e 'console.log(new Date(process.argv[1]).toISOString())' "$LIVE_CALC_RAW")
-          CALC_NORM=$(node -e 'console.log(new Date(process.argv[1]).toISOString())' "$CALC_UTC")
-          if [ "$LIVE_CALC" != "$CALC_NORM" ]; then
-            echo "canonical timestamp mismatch: live=$LIVE_CALC local=$CALC_UTC" >&2
-            exit 1
-          fi
-          echo "canonical calc timestamp verified live: $LIVE_CALC"
+          # Bounded propagation check: up to ~6 min of cache-busted retries.
+          node scripts/ci/ut-verify.mjs "https://usethismodel.vercel.app/data-calc.json" "$CALC_UTC"
           node -e '
           (async () => {
             const calcUtc = process.env.CALC_UTC, sha = process.env.PICKS_SHA;

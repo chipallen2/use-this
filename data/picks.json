@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-14",
+  "date": "2026-10-16",
   "agent": {
     "winner": {
       "model": "Muse Spark 1.3",
@@ -10,7 +10,7 @@
       "costPerTask": 0.08,
       "outputTokens": null,
       "steps": null,
-      "speed": 128,
+      "speed": 134,
       "openRouterId": "meta/muse-spark-1.3-contributor",
       "rawName": "Muse Spark 1.3 (max)",
       "unmatched": false,
@@ -62,11 +62,11 @@
       "openRouterId": "openai/gpt-6-astra",
       "rawName": "gpt-6-astra [xhigh]",
       "unmatched": false,
-      "sources": "50% DeepSWE + 50% Design Arena Full-Stack",
+      "sources": "50% DeepSWE + 50% Design Arena Frontend",
       "deepScore": 100,
       "deepRaw": 74,
       "designScore": 100,
-      "designElo": 1397,
+      "designElo": 1392,
       "daPricePerMillion": 20
     },
     "bestScore": 100,

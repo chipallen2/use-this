@@ -8,7 +8,19 @@ import { dirname } from "path";
 const DATA = process.argv[2] || "data";
 const OUT = process.argv[3] || "dist/index.html";
 
-const RECALC_URL = process.env.RECALC_URL || "RECALC_URL_PLACEHOLDER";
+// Canonical public recalc endpoint. This default is the REAL production URL so
+// a missing RECALC_URL env can NEVER bake a broken placeholder into a deploy.
+// A deploy carrying a placeholder endpoint is refused outright (see the
+// PLACEHOLDER_GUARD check before the dist writes below).
+// Test/dev overrides still work via RECALC_URL env, but any override that
+// looks like a placeholder is rejected the same way.
+const CANONICAL_RECALC_URL = "https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc";
+const PLACEHOLDER_RE = /PLACEHOLDER/i;
+const RECALC_URL = process.env.RECALC_URL || CANONICAL_RECALC_URL;
+if (PLACEHOLDER_RE.test(RECALC_URL)) {
+  console.error("RENDER REFUSED: RECALC_URL looks like a placeholder (" + RECALC_URL + ") - refusing to bake a broken endpoint. Set RECALC_URL to the real edge-fn URL or unset it for the canonical default.");
+  process.exit(1);
+}
 
 const picks = JSON.parse(readFileSync(`${DATA}/picks.json`, "utf8"));
 const cands = JSON.parse(readFileSync(`${DATA}/candidates.json`, "utf8"));
@@ -325,6 +337,15 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const [l1, l2] = displayName(w.openRouterId);
   const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
   const isCoding = key !== "agent";
+  // Provenance for this card: agent cards are pure AA; coding cards show
+  // the winner's own blend (single-signal winners say so explicitly,
+  // e.g. "DeepSWE only - no Design Arena data yet") so a Design-only or
+  // DeepSWE-only winner is never misread as a 50/50 blend.
+  const provenanceLine = isCoding && w.sources
+    ? `<p class="provenance">Winner basis: ${esc(w.sources)}.</p>`
+    : isCoding
+      ? `<p class="provenance">Winner basis: 50% DeepSWE + 50% Design Arena Frontend.</p>`
+      : `<p class="provenance">Winner basis: Artificial Analysis Intelligence Index.</p>`;
   // Coding tables show the blend math transparently: Combined + per-signal raw/norm.
   // Both signals are min-max normalized to 0-100 for blending; table shows raw DeepSWE % + Elo.
   const fmtDeep = (p) => p.deepScore == null ? "-" : (p.deepRaw != null ? `${p.deepRaw}%*` : `${p.deepScore}%`);
@@ -361,10 +382,11 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
-<p class="explain"><strong>Score = ${linkify(esc(benchLabel))},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : linkify(" Coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized to 0-100); models missing one signal use the other at 100%.")}</p>
+<p class="explain"><strong>Score = ${linkify(esc(benchLabel))},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : linkify(" Coding score = 50% DeepSWE + 50% Design Arena Frontend (both min-max normalized to 0-100); models missing one signal use the other at 100%.")}</p>
 <table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
 ${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 0-100 for blending. DeepSWE shows raw test %; Design shows raw Elo.</p>') : ""}
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
+${provenanceLine}
 </div></div></div>`;
 }
 
@@ -425,8 +447,8 @@ function card(key, color) {
 
 const why = {
   agent: `Cheapest chat model clearing 90% of frontier quality at $${picks.agent.winner.costPerTask}/task.`,
-  everyday: `Cheapest model clearing 90% of frontier blended coding quality at $${picks.everyday.winner.costPerTask}/task. Score = ${esc(picks.everyday.winner.sources || "50% DeepSWE + 50% Design Arena Full-Stack")}.`,
-  hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "50% DeepSWE + 50% Design Arena Full-Stack")}. Frontier quality without the frontier bill.`,
+  everyday: `Cheapest model clearing 90% of frontier blended coding quality at $${picks.everyday.winner.costPerTask}/task. Score = ${esc(picks.everyday.winner.sources || "50% DeepSWE + 50% Design Arena Frontend")}.`,
+  hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "50% DeepSWE + 50% Design Arena Frontend")}. Frontier quality without the frontier bill.`,
 };
 
 // WebMCP structured data response: first application/ld+json block on the
@@ -540,6 +562,7 @@ th button:hover{text-decoration:underline}
 svg circle.dot{cursor:pointer}
 .tip{position:absolute;z-index:5;max-width:230px;background:#141414;color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.35)}
 .tip strong{display:block;font-size:14px;margin-bottom:2px}
+.provenance{margin:12px 2px 0;font-size:13px;color:#495057;font-weight:700}
 tr.win td{background:#141414;color:#fff;font-weight:900}
 tr.below td{opacity:.55}
 .id-row{margin-top:16px;background:#141414;color:#fff;border-radius:14px;padding:14px 16px;font-size:14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
@@ -569,7 +592,7 @@ ${card("agent", "chat")}
 ${card("everyday", "everyday")}
 ${card("hard", "hard")}
 </main>
-<footer>Updated ${esc(calcDateStr)} ${esc(calcTimeStr)} - ${linkify("scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Full-Stack (coding)")}</footer>
+<footer>Updated ${esc(calcDateStr)} ${esc(calcTimeStr)} - ${linkify("scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Frontend (coding)")}</footer>
 ${modal("agent", "chat", "AA Intelligence Index", 90, why.agent)}
 ${modal("everyday", "everyday", "DeepSWE + Design Arena", 90, why.everyday)}
 ${modal("hard", "hard", "DeepSWE + Design Arena", 97, why.hard)}
@@ -708,8 +731,29 @@ return {status:"error",message:"Recalculation failed: "+(j.error||("HTTP "+res.s
 return {status:"error",message:"Recalculation request failed (network error). Please retry.",last_calc:null};
 });
 }
-function shortStatus(r){return r.status==="fresh"?"Already fresh":r.status==="started"?"Started - check back soon":r.status==="in-progress"?"Already running - check back soon":"Failed - retry";}
+function shortStatus(r){return r.status==="fresh"?"Already fresh":r.status==="started"?"Started - checking for fresh picks":r.status==="in-progress"?"Already running - checking for fresh picks":"Failed - retry";}
 function recalcMessage(r){var s=shortStatus(r);return s+(r.last_calc?" (last calc "+r.last_calc+")":"");}
+// Bounded freshness polling: after started/in-progress, poll the canonical
+// data-calc.json (cache-busted) for a genuinely NEWER verified timestamp.
+// Reloads the page exactly once, only when the server timestamp is strictly
+// newer than the baked instant - stale polls and fetch failures never
+// trigger a reload and never claim freshness.
+var POLL_MAX = 20, POLL_GAP_MS = 30000;
+function bakedCalcUtc(){try{var el=document.querySelector(".calc-time");var u=el&&el.getAttribute("data-calc-utc");if(u&&!isNaN(new Date(u).getTime()))return new Date(u).getTime();}catch(e){}return null;}
+function fetchLiveUtc(){return fetch("/data-calc.json?_="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}).then(function(j){if(!j||typeof j.calc_utc!=="string"||isNaN(new Date(j.calc_utc).getTime()))throw new Error("bad data-calc.json");return new Date(j.calc_utc).getTime();});}
+function later(fn){try{if(typeof setTimeout!=="function")return;}catch(e){return;}setTimeout(fn,POLL_GAP_MS);}
+function pollForFresh(bakedMs,left){
+if(left<=0){setRecalcUI(false,"Still computing - check back soon",false);return;}
+fetchLiveUtc().then(function(liveMs){
+if(bakedMs!=null&&liveMs>bakedMs){window.location.reload();return;}
+if(bakedMs==null&&liveMs>0){window.location.reload();return;}
+setRecalcUI(false,"Still computing - checking again soon",false);
+later(function(){pollForFresh(bakedMs,left-1);});
+},function(){
+setRecalcUI(false,"Still computing - checking again soon",false);
+later(function(){pollForFresh(bakedMs,left-1);});
+});
+}
 if(document.modelContext&&document.modelContext.registerTool){
 try{
 document.modelContext.registerTool({name:"get_picks",description:"Returns the 3 current model picks (chatting, everyday coding, crazy hard coding) with model name, thinking level, price per task, quality score, and copy-paste OpenRouter ID.",inputSchema:{type:"object",properties:{}},execute:function(){return Promise.resolve(JSON.stringify(collectPicks()));}});
@@ -738,7 +782,9 @@ ev.preventDefault();
 var btn=document.getElementById("recalc");
 if(btn){btn.disabled=true;btn.textContent="Checking...";}
 setRecalcUI(true,"Checking...");
-doRecalc().then(function(r){setRecalcUI(false,recalcMessage(r),r.status==="error");}).catch(function(){setRecalcUI(false,"Failed - retry",true);});
+doRecalc().then(function(r){
+if(r.status==="started"||r.status==="in-progress"){setRecalcUI(false,recalcMessage(r),false);pollForFresh(bakedCalcUtc(),POLL_MAX);return;}
+setRecalcUI(false,recalcMessage(r),r.status==="error");}).catch(function(){setRecalcUI(false,"Failed - retry",true);});
 });}
 })();
 </script>
@@ -758,7 +804,7 @@ const llms = `# USE THIS MODEL
 
 > ${calcDateStr} picks (last successful calc: ${calcIsEstimate ? "unknown - data predates calc provenance" : calcUtc}): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
 
-Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 50% DeepSWE + 50% Design Arena Full-Stack (both min-max normalized 0-100; single-signal models pass at 100%).
+Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 50% DeepSWE + 50% Design Arena Frontend (both min-max normalized 0-100; single-signal models pass at 100%).
 
 ## Picks
 

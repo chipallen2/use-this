@@ -14,10 +14,15 @@ npm install
 npx playwright install chromium
 npm run scrape   # writes data/picks.json + data/candidates.json
 npm run render   # writes dist/index.html (render-only: never moves the calc stamp)
-npm test         # 38 node:test cases: guard, lease, callbacks, workflow claim/stage, frontend (incl. real human submit + get_picks + schema validation), render, real-SQL PGlite
+npm test         # 67 node:test cases: guard, lease, callbacks, workflow claim/stage/verify, frontend (incl. real human submit + polling + get_picks + schema validation), render, real-SQL PGlite
+npm run test:e2e # 2 Playwright regression tests: refresh flow + all 3 detail popups vs candidates.json
 ```
 
 Set `RECALC_URL` env when rendering for production (Supabase recalc endpoint).
+Without it, render bakes the canonical production endpoint
+(`https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc`) - a
+missing env can never produce a placeholder. Any placeholder-looking value
+refuses to render (exit 1) so a broken endpoint can never deploy.
 
 ## Deployment protocol (order matters)
 

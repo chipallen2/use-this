@@ -629,7 +629,7 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
           blended.push({
             ...d,
             score: round((nd + g.design.score) / 2, 1),
-            sources: "50% DeepSWE + 50% Design Arena Full-Stack",
+            sources: "50% DeepSWE + 50% Design Arena Frontend",
             deepScore: nd, deepRaw: d.score, designScore: g.design.score, designElo: g.design.elo,
             daPricePerMillion: g.design.daPricePerMillion ?? null,
           });

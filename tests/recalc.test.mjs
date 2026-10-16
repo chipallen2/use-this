@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { createHandler, GUARD_MS, LEASE_TTL_MS, FUTURE_SKEW_MS } from "../supabase/functions/ut-recalc/handler.mjs";
 import { decideClaim, parseClaimResponse, SKIP_EXACT } from "../scripts/ci/ut-claim.mjs";
+import { verifyOnce, verifyWithRetries, normalizeUtc, looksLikePlaceholder } from "../scripts/ci/ut-verify.mjs";
 import { missingPaths, DEPLOY_PATHS } from "../scripts/ci/ut-stage.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -720,11 +721,12 @@ test("render: missing calc.json shows data date + explicit unknown, no invented 
   assert.ok(html.includes("data-calc-estimate"), "estimate flag baked");
   assert.ok(html.includes("time unknown"), "explicit unknown, no guessed time");
   assert.ok(!html.includes("last successful calc: 2026"), "llms.txt must not claim a calc");
-  const m = html.match(/<span class="calc-stamp">([\s\S]*?)<\/span>/);
-  assert.ok(m, "calc stamp present");
+  const m = html.match(/<span class="calc-stamp">([\s\S]*?)<\/form>/);
+  assert.ok(m, "calc stamp + recalc form present");
   assert.ok(!m[1].includes("data-calc-utc="), "no invented UTC instant on unknown provenance");
-  assert.ok(!m[1].includes("datetime="), "no timestamp attr when the instant is unknown");
-  assert.ok(/Picks for September \d{1,2}, 2026/.test(m[1]), "data date still shown");
+  const stampOnly = m[1].split("<form")[0];
+  assert.ok(!stampOnly.includes("datetime="), "no timestamp attr when the instant is unknown");
+  assert.ok(/Picks for [A-Z][a-z]+ \d{1,2}, 2026/.test(stampOnly), "data date still shown");
 });
 
 // ---- PGlite: the ACTUAL migration SQL, not a fake ----
@@ -825,4 +827,150 @@ test("sql: real migration enforces claim/complete/fail ownership (PGlite)", asyn
   assert.equal((await rpc("ut_fail_recalc", { p_claim: "forged", p_now: NOW + 600e3 + G + 2000, p_ttl_ms: T })).code, "lease-owned");
   assert.equal((await rpc("ut_fail_recalc", { p_claim: "cB", p_now: NOW + 600e3 + G + 3000, p_ttl_ms: T })).released, true);
   await db.close();
+});
+
+// ---- ut-verify.mjs: bounded propagation verification (Oct 13/14 root cause) ----
+test("verify: matching timestamps (mixed formats) pass on first attempt", async () => {
+  const fetcher = async () => ({ calc_utc: "2026-10-14T07:55:01.000Z" });
+  const r = await verifyWithRetries({
+    fetcher, liveUrl: "https://x.test/data-calc.json",
+    expectedUtc: "2026-10-14T07:55:01Z", maxAttempts: 3, retryMs: 1,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.attempts, 1);
+  assert.equal(r.live, "2026-10-14T07:55:01.000Z");
+});
+
+test("verify: stale live stamp retries then succeeds when propagation lands", async () => {
+  let n = 0;
+  const fetcher = async () => (++n < 3 ? { calc_utc: "2026-10-13T19:44:20.000Z" } : { calc_utc: "2026-10-14T07:55:01Z" });
+  const seen = [];
+  const r = await verifyWithRetries({
+    fetcher, liveUrl: "https://x.test/data-calc.json",
+    expectedUtc: "2026-10-14T07:55:01Z", maxAttempts: 5, retryMs: 1,
+    onAttempt: (i, x) => seen.push(i),
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.attempts, 3);
+  assert.deepEqual(seen, [1, 2, 3]);
+});
+
+test("verify: persistent mismatch exhausts retries and fails (never faked)", async () => {
+  const fetcher = async () => ({ calc_utc: "2026-10-13T19:44:20.000Z" });
+  const r = await verifyWithRetries({
+    fetcher, liveUrl: "https://x.test/data-calc.json",
+    expectedUtc: "2026-10-14T07:55:01Z", maxAttempts: 3, retryMs: 1,
+  });
+  assert.equal(r.ok, false);
+  assert.equal(r.attempts, 3);
+});
+
+test("verify: placeholder live URL refused outright", async () => {
+  await assert.rejects(
+    verifyOnce({ fetcher: async () => ({}), liveUrl: "RECALC_URL_PLACEHOLDER", expectedUtc: "2026-10-14T07:55:01Z", nonce: "1" }),
+    /placeholder/i,
+  );
+  assert.equal(looksLikePlaceholder("RECALC_URL_PLACEHOLDER"), true);
+  assert.equal(looksLikePlaceholder("https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc"), false);
+});
+
+test("verify: cache-bust nonce varies across attempts", async () => {
+  const urls = [];
+  const fetcher = async (u) => { urls.push(u); return { calc_utc: "2026-10-14T07:55:01Z" }; };
+  await verifyWithRetries({
+    fetcher, liveUrl: "https://x.test/data-calc.json",
+    expectedUtc: "2026-10-14T07:55:01Z", maxAttempts: 3, retryMs: 1,
+  });
+  assert.equal(urls.length, 1);
+  assert.match(urls[0], /[?&]_=/, "cache-bust query present");
+});
+
+test("render: missing RECALC_URL bakes the canonical endpoint, never a placeholder", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ut-canonical-"));
+  copyFileSync(join(ROOT, "data", "picks.json"), join(dir, "picks.json"));
+  copyFileSync(join(ROOT, "data", "candidates.json"), join(dir, "candidates.json"));
+  copyFileSync(join(ROOT, "data", "calc.json"), join(dir, "calc.json"));
+  const env = { ...process.env };
+  delete env.RECALC_URL;
+  execFileSync("node", [join(ROOT, "scripts", "render.mjs"), dir, join(dir, "index.html")], { env });
+  const html = readFileSync(join(dir, "index.html"), "utf8");
+  assert.ok(!html.includes("PLACEHOLDER"), "no placeholder baked without env");
+  assert.ok(html.includes("https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc"), "canonical endpoint baked");
+});
+
+test("render: placeholder RECALC_URL refused (never deploys broken endpoint)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "ut-phrefuse-"));
+  copyFileSync(join(ROOT, "data", "picks.json"), join(dir, "picks.json"));
+  copyFileSync(join(ROOT, "data", "candidates.json"), join(dir, "candidates.json"));
+  assert.throws(
+    () => execFileSync("node", [join(ROOT, "scripts", "render.mjs"), dir, join(dir, "index.html")],
+      { env: { ...process.env, RECALC_URL: "RECALC_URL_PLACEHOLDER" }, stdio: "pipe" }),
+    "placeholder endpoint refused",
+  );
+});
+
+// ---- frontend polling: reload only on genuinely newer verified stamp ----
+test("frontend: polling reloads on genuinely newer live stamp, never on stale/failure", async () => {
+  const { html } = renderFresh({ calcUtc: "2026-10-14T07:55:01.000Z" });
+  const script = loadInlineScript(html);
+  const picks = JSON.parse(readFileSync(join(ROOT, "data", "picks.json"), "utf8"));
+  const payload = { status: "started", last_calc: "2026-10-14T07:55:01.000Z", in_progress_since: "2026-10-16T20:00:00.000Z" };
+  // Case 1: live stamp newer -> reload fires.
+  let reloaded = 0, timers = [];
+  const newerFetch = async (url) => {
+    if (String(url).includes("data-calc.json")) return { ok: true, json: async () => ({ calc_utc: "2026-10-16T20:30:00.000Z" }) };
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+  };
+  const mk = (fetchImpl) => {
+    const { document, state, statusEl, btnEl } = fakeDom(picks);
+    const calcEl = { _attrs: {}, getAttribute: (a) => (a === "data-calc-utc" ? "2026-10-14T07:55:01.000Z" : null), set textContent(v) {}, get textContent() { return ""; } };
+    document.querySelector = (sel) => {
+      if (sel === ".calc-time") return calcEl;
+      if (sel === ".calc-stamp time") return { getAttribute: () => "2026-10-14" };
+      if (sel === ".calc-stamp") return { querySelector: () => ({}) };
+      return null;
+    };
+    const sandbox = {
+      document: { ...document, modelContext: null },
+      fetch: fetchImpl,
+      console: { log() {} },
+      window: null,
+      location: null,
+      setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    };
+    sandbox.window = { location: { reload: () => { reloaded++; } } };
+    Object.defineProperty(sandbox, "location", { get: () => sandbox.window.location });
+    // window.location.reload path: the script calls window.location.reload()
+    sandbox.window.location.reload = () => { reloaded++; };
+    vm.createContext(sandbox);
+    vm.runInContext(script, sandbox);
+    return state;
+  };
+  const st1 = mk(newerFetch);
+  await submitForm(st1);
+  // poll fetch is async: allow microtasks + the immediate fetch chain
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(reloaded, 1, "reload fires exactly once on genuinely newer stamp");
+  // Case 2: stale live stamp -> no reload, retry scheduled instead.
+  reloaded = 0; timers = [];
+  const staleFetch = async (url) => {
+    if (String(url).includes("data-calc.json")) return { ok: true, json: async () => ({ calc_utc: "2026-10-14T07:55:01.000Z" }) };
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+  };
+  const st2 = mk(staleFetch);
+  await submitForm(st2);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(reloaded, 0, "stale stamp never reloads");
+  assert.ok(timers.length >= 1, "stale poll schedules a retry");
+  // Case 3: fetch failure -> no reload, retry scheduled.
+  reloaded = 0; timers = [];
+  const failFetch = async (url) => {
+    if (String(url).includes("data-calc.json")) throw new TypeError("fetch failed");
+    return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+  };
+  const st3 = mk(failFetch);
+  await submitForm(st3);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(reloaded, 0, "fetch failure never reloads");
+  assert.ok(timers.length >= 1, "failed poll schedules a retry");
 });
