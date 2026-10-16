@@ -58,6 +58,7 @@ export function displayName(id) {
     [/^gpt-5\.2.*$/, ["GPT-5.2", ""]],
     [/^gpt-5\.1-codex.*$/, ["GPT-5.1", "Codex"]],
     [/^deepseek-v4-flash.*$/, ["DeepSeek V4", "Flash"]],
+    [/^beam-1\.0.*$/, ["Beam", "1.0"]],
     [/^inkling.*$/, ["Inkling", ""]],
     [/^ling-3\.1-flash$/, ["Ling 3.1", "Flash"]],
     [/^kimi-k2\.5.*$/, ["Kimi K2.5", ""]],

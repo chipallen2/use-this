@@ -9,6 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   normalizeModelName,
   versionSig,
@@ -18,6 +19,8 @@ import {
   attachOpenRouter,
   blendCodingScores,
   medianUsageTokens,
+  parseAACodingHTML,
+  addContributorTwins,
   pickCheapestAbove,
   pickCheapestMatched,
   isUnmatched,
@@ -216,8 +219,8 @@ test("coding: bare family names + ultraspeed rollup resolve", () => {
 });
 
 test("coding: blended pool carries both signals, design-only priced at scale", () => {
-  // one DeepSWE row + one Design row for the same model -> 50/50 blend;
-  // a Design-only model gets a cost estimate scaled to DeepSWE usage.
+  // one AA Coding row + one Design row for the same model -> 50/50 blend;
+  // a Design-only model gets a cost estimate scaled to AA coding usage.
   const deep = [
     { rawName: "gpt-6-astra [xhigh]", model: "gpt-6-astra", effort: "xhigh", score: 74, costPerTask: 4.43, outputTokens: 30000, orPromptPerMillion: 10, orCompletionPerMillion: 50, openRouterId: "openai/gpt-6-astra", effortSupported: true },
     { rawName: "gemini-3.5-flash [high]", model: "gemini-3.5-flash", effort: "high", score: 36, costPerTask: 3.45, outputTokens: 76000, orPromptPerMillion: 1.5, orCompletionPerMillion: 9, openRouterId: "google/gemini-3.5-flash", effortSupported: true },
@@ -228,12 +231,15 @@ test("coding: blended pool carries both signals, design-only priced at scale", (
   ];
   const blended = blendCodingScores(deep, design);
   const byId = new Map(blended.map((x) => [x.openRouterId, x]));
+  assert.equal(byId.get("openai/gpt-6-astra").score, 90, "(100 AA + 80 Design)/2");
+  assert.equal(byId.get("openai/gpt-6-astra").aaRaw, 74);
+  assert.equal(byId.get("google/gemini-3.5-flash").score, 0, "AA-only keeps normalized signal at 100% weight");
   // blended model averages both signals
   assert.ok(byId.get("openai/gpt-6-astra").sources.includes("50%"));
   assert.ok(byId.get("openai/gpt-6-astra").designElo === 1324);
   // design-only model: estimated cost uses registry price at median usage
   const only = byId.get("z-ai/glm-5.2");
-  assert.equal(only.sources, "Design Arena only - no DeepSWE data yet");
+  assert.equal(only.sources, "Design Arena only - no AA Coding data yet");
   const usage = medianUsageTokens(deep);
   assert.ok(usage > 0, "median usage positive");
   assert.ok(Math.abs(only.costPerTask - (2.225 * usage) / 1_000_000) < 0.015, `cost scaled to usage: ${only.costPerTask}`);
@@ -289,4 +295,68 @@ test("graceful: empty cutoff still throws (real data problem, not new models)", 
     { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 10, costPerTask: 5.98 },
   ], CATALOG);
   assert.throws(() => pickCheapestMatched(pool, 50), /No eligible model/, "no eligible model still fails loud");
+});
+
+
+// Frozen live AA coding source, independently fetched 2026-10-16.
+const codingHTML = readFileSync(new URL("./fixtures/aa-coding-2026-10-16.html", import.meta.url), "utf8");
+test("AA coding: real Flight rows have source-grounded names, scores, costs and efforts", () => {
+  const rows = parseAACodingHTML(codingHTML);
+  assert.equal(rows.length, 39);
+  const get = (model, effort) => rows.find((x) => x.model === model && x.effort === effort);
+  for (const [model, effort, score, cost] of [
+    ["Opus 5.5", "max", 66, 13.04], ["Sonnet 5.5", "max", 68.4, 14.19],
+    ["Opus 5", "max", 59.7, 10.79], ["GPT-6.1 Sol", "xhigh", 62.9, 1.04],
+    ["Gemini 4 Argon", "high", 63.8, 5.84], ["GLM-5.3", "max", 53.6, 4.24],
+    ["Qwen3.8 Max", null, 43.3, 3.48],
+  ]) {
+    const row = get(model, effort);
+    assert.ok(row, `${model} [${effort}] present`);
+    assert.equal(row.score, score); assert.equal(row.costPerTask, cost);
+  }
+  assert.ok(!rows.some((x) => x.rawName.includes(" + ")), "dual-model agent runs cannot become single-model scores");
+  assert.equal(get("Beam 1.0", null).score, 27.7, "null-cost row never borrows adjacent Opus score");
+  assert.equal(get("Beam 1.0", null).costPerTask, null);
+  assert.equal(get("Muse Wonder Full", "max").score, 68, "null-cost row never borrows adjacent Haiku score");
+  assert.equal(get("Muse Wonder Full", "max").costPerTask, null);
+});
+
+test("AA coding: vendor-less aliases retain version gates and family binding", () => {
+  assert.equal(resolve("Opus 5.5").model.id, "anthropic/claude-opus-5.5");
+  assert.equal(resolve("Opus 5").model.id, "anthropic/claude-opus-5");
+  assert.equal(resolve("Sonnet 5.5").model.id, "anthropic/claude-sonnet-5.5");
+  assert.equal(resolve("Opus 5.6").kind, "unmatched");
+  assert.equal(resolve("Notopus 5.5").kind, "unmatched");
+});
+
+test("AA coding: malformed/missing metrics cannot consume the next row", () => {
+  const row = (id, extra) => ({id, isDefault: true, displayLabel: `Test - Future ${id} (max)`, display: {model: `Future ${id}`}, ...extra});
+  const html = JSON.stringify([row("1", {}), row("2", {indexScore: 0.7, mean: {costUsd: null}}), row("3", {indexScore: 0.6, mean: {costUsd: 2}})]);
+  const rows = parseAACodingHTML(html);
+  assert.equal(rows.length, 2); assert.equal(rows[0].model, "Future 2");
+  assert.equal(rows[0].score, 70); assert.equal(rows[0].costPerTask, null);
+  assert.equal(rows[1].score, 60); assert.equal(rows[1].costPerTask, 2);
+  assert.throws(() => parseAACodingHTML("<html>No board</html>"), /Could not parse/);
+});
+
+test("AA coding: unknown price is never treated as zero or selected as cheapest", () => {
+  const rows = [{openRouterId: "test/unpriced", score: 100, costPerTask: null}, {openRouterId: "test/priced", score: 98, costPerTask: 4}];
+  assert.equal(pickCheapestMatched(rows, 97)[0].openRouterId, "test/priced");
+});
+
+test("catalog prefix boundary: absent legacy listing never borrows newer version", () => {
+  assert.equal(findOpenRouterModel("Opus 5", [or("anthropic/claude-opus-5.5")]).kind, "unmatched");
+  assert.equal(findOpenRouterModel("GPT-6 Sol", [or("openai/gpt-6-solstice")]).kind, "unmatched");
+});
+
+test("contributor twin inherits the final AA/Design blend and preserves missing price", () => {
+  const catalog = [or("meta/muse-spark-1.3", 1, 3), or("meta/muse-spark-1.3-contributor", 0.1, 0.3)];
+  const aa = [{openRouterId: catalog[0].id, score: 70, costPerTask: 2, effort: "max"}, {openRouterId: "other/model", score: 30, costPerTask: 1}];
+  const design = [{openRouterId: catalog[0].id, score: 40, elo: 1200}];
+  const rows = addContributorTwins(blendCodingScores(aa, design), catalog);
+  const regular = rows.find((x) => x.openRouterId === catalog[0].id);
+  const twin = rows.find((x) => x.openRouterId === catalog[1].id);
+  assert.equal(twin.score, 70); assert.equal(twin.score, regular.score);
+  assert.equal(twin.sources, regular.sources); assert.equal(twin.designElo, 1200);
+  assert.equal(addContributorTwins([{...aa[0], costPerTask: null}], catalog)[1].costPerTask, null);
 });

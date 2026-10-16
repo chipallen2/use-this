@@ -30,15 +30,15 @@ const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 // Benchmark source links (footer + popup explain text). Applied AFTER esc().
 const AA_URL = "https://artificialanalysis.ai/leaderboards/models";
-const DEEPSWE_URL = "https://deepswe.datacurve.ai/";
+const AA_CODING_URL = "https://artificialanalysis.ai/agents/coding-agents";
 const DESIGN_URL = "https://www.designarena.ai/leaderboard?section=agentic-web-dev";
 const blink = (url, text) => `<a href="${url}" target="_blank" rel="noopener">${text}</a>`;
 function linkify(s) {
   return String(s)
+    .replace(/AA Coding Agent Index/g, blink(AA_CODING_URL, "AA Coding Agent Index"))
     .replace(/AA Intelligence Index/g, blink(AA_URL, "AA Intelligence Index"))
     .replace(/Artificial Analysis/g, blink(AA_URL, "Artificial Analysis"))
-    .replace(/Design Arena/g, blink(DESIGN_URL, "Design Arena"))
-    .replace(/DeepSWE/g, blink(DEEPSWE_URL, "DeepSWE"));
+    .replace(/Design Arena/g, blink(DESIGN_URL, "Design Arena"));
 }
 
 // Short display name lives in ./display-name.mjs (shared with tests) - see imports above.
@@ -46,9 +46,9 @@ function linkify(s) {
 // (shortSource kept for why-text fallbacks; Signal column removed in favor of per-signal columns.)
 function shortSource(s) {
   if (!s) return "";
-  if (s.startsWith("50% DeepSWE")) return "blend";
+  if (s.startsWith("50% AA Coding")) return "blend";
   if (s.startsWith("Design Arena only")) return "Design only";
-  if (s.startsWith("DeepSWE only")) return "DeepSWE only";
+  if (s.startsWith("AA Coding only")) return "AA Coding only";
   return s;
 }
 
@@ -73,6 +73,7 @@ function orgOf(id) {
   if (o === "moonshotai") return "Moonshot AI";
   if (o === "deepseek") return "DeepSeek";
   if (o === "alibaba" || o === "qwen") return "Alibaba";
+  if (o === "reflection") return "Reflection";
   return o;
 }
 const ORG_COLORS = {
@@ -101,21 +102,21 @@ function moneyTicks(lo, hi) {
   return niceTicks(lo, hi, 5);
 }
 
-// Inline SVG scatter (AA/DeepSWE style): x = cost/task, CHEAP on LEFT; y = score.
+// Inline SVG scatter (AA style): x = cost/task, CHEAP on LEFT; y = score.
 // Light grid, $ and % ticks, dots colored by org, all dots labeled + native
 // <title> tooltips, dashed CUTOFF line with shaded winning zone above it,
 // FRONTIER tag on the top scorer, USE THIS ring + callout on the winner.
 function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
-  const pts = [...list].sort((a, b) => a.costPerTask - b.costPerTask);
+  const pts = list.filter((p) => Number.isFinite(p.costPerTask)).sort((a, b) => a.costPerTask - b.costPerTask);
   const W = 760, H = 480, L = 56, R = 740, T = 26, B = 392;
   const scores = pts.map((p) => p.score);
   const costs = pts.map((p) => p.costPerTask);
   const key = (p) => p.openRouterId + "|" + p.effort;
-  // Tooltip signal detail for coding pools (entries carry deepRaw/designElo).
+  // Tooltip signal detail for coding pools (entries carry aaRaw/designElo).
   const signalTip = (p) => {
-    if (p.deepRaw == null && p.designElo == null) return "";
+    if (p.aaRaw == null && p.designElo == null) return "";
     const bits = [];
-    if (p.deepRaw != null) bits.push(`DeepSWE ${p.deepRaw}%`);
+    if (p.aaRaw != null) bits.push(`AA Coding ${p.aaRaw}`);
     if (p.designElo != null) bits.push(`Design Elo ${p.designElo}`);
     return " (" + bits.join(", ") + ")";
   };
@@ -242,16 +243,16 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
   const isCoding = key !== "agent";
   // Provenance for this card: agent cards are pure AA; coding cards show
   // the winner's own blend (single-signal winners say so explicitly,
-  // e.g. "DeepSWE only - no Design Arena data yet") so a Design-only or
-  // DeepSWE-only winner is never misread as a 50/50 blend.
+  // e.g. "AA Coding only - no Design Arena data yet") so a Design-only or
+  // AA-only winner is never misread as a 50/50 blend.
   const provenanceLine = isCoding && w.sources
     ? `<p class="provenance">Winner basis: ${esc(w.sources)}.</p>`
     : isCoding
-      ? `<p class="provenance">Winner basis: 50% DeepSWE + 50% Design Arena Frontend.</p>`
+      ? `<p class="provenance">Winner basis: 50% AA Coding Agent Index + 50% Design Arena Frontend.</p>`
       : `<p class="provenance">Winner basis: Artificial Analysis Intelligence Index.</p>`;
   // Coding tables show the blend math transparently: Combined + per-signal raw/norm.
-  // Both signals are min-max normalized to 0-100 for blending; table shows raw DeepSWE % + Elo.
-  const fmtDeep = (p) => p.deepScore == null ? "-" : (p.deepRaw != null ? `${p.deepRaw}%*` : `${p.deepScore}%`);
+  // Both signals are min-max normalized to 0-100 for blending; table shows raw AA index % + Elo.
+  const fmtAA = (p) => p.aaScore == null ? "-" : (p.aaRaw != null ? `${p.aaRaw}*` : `${p.aaScore}%`);
   const fmtDesign = (p) => p.designScore == null ? "-" : `Elo ${p.designElo}*`;
   const sortVal = (v) => v == null ? "" : String(v);
   const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
@@ -260,10 +261,10 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
     const [n1, n2] = displayName(p.openRouterId);
     const nameCell = `<td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td>`;
     const thinkCell = `<td>${esc(p.effort || "default")}</td>`;
-    const priceCell = `<td data-v="${p.costPerTask}">$${p.costPerTask}</td>`;
+    const priceCell = `<td data-v="${sortVal(p.costPerTask)}">${p.costPerTask == null ? "N/A" : `$${p.costPerTask}`}</td>`;
     let scoreCells, headExtra;
     if (isCoding) {
-      scoreCells = `<td data-v="${p.score}">${p.score}%</td><td data-v="${sortVal(p.deepScore)}">${esc(fmtDeep(p))}</td><td data-v="${sortVal(p.designScore)}">${esc(fmtDesign(p))}</td>`;
+      scoreCells = `<td data-v="${p.score}">${p.score}%</td><td data-v="${sortVal(p.aaScore)}">${esc(fmtAA(p))}</td><td data-v="${sortVal(p.designScore)}">${esc(fmtDesign(p))}</td>`;
       headExtra = "";
     } else {
       scoreCells = `<td data-v="${p.score}">${p.score}%</td>`;
@@ -273,7 +274,7 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
     return `<tr${isWin ? ' class="win"' : below ? ' class="below"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
   }).join("");
   const head = isCoding
-    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">DeepSWE *</button></th><th><button type="button" data-col="4" data-type="num">Design *</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
+    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">AA Coding *</button></th><th><button type="button" data-col="4" data-type="num">Design *</button></th><th><button type="button" data-col="5" data-type="num">Price</button></th>`
     : `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>`;
   return `<div class="modal" id="modal-${key}" aria-hidden="true"><div class="modal-card ${color}" role="dialog" aria-label="${cardTitle(key)} detail">
 <button class="close" data-close="${key}" aria-label="Close">&times;</button>
@@ -285,9 +286,9 @@ function modal(key, color, benchLabel, thresholdPct, whyText) {
 ${ch.legend}
 ${ch.svg}
 <div class="tip" hidden></div>
-<p class="explain"><strong>Score = ${linkify(esc(benchLabel))},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : linkify(" Coding score = 50% DeepSWE + 50% Design Arena Frontend (both min-max normalized to 0-100); models missing one signal use the other at 100%.")}</p>
+<p class="explain"><strong>Score = ${linkify(esc(benchLabel))},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : linkify(" Coding score = 50% AA Coding Agent Index + 50% Design Arena Frontend (both min-max normalized to 0-100); models missing one signal use the other at 100%.")}</p>
 <table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table>
-${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 0-100 for blending. DeepSWE shows raw test %; Design shows raw Elo.</p>') : ""}
+${isCoding ? linkify('<p class="norm-note">* Both signals min-max normalized to 0-100 for blending. AA Coding shows raw index points; Design shows raw Elo. Rows with no published task cost show N/A, are omitted from the price chart, and cannot win.</p>') : ""}
 <div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
 ${provenanceLine}
 </div></div></div>`;
@@ -350,8 +351,8 @@ function card(key, color) {
 
 const why = {
   agent: `Cheapest chat model clearing 90% of frontier quality at $${picks.agent.winner.costPerTask}/task.`,
-  everyday: `Cheapest model clearing 90% of frontier blended coding quality at $${picks.everyday.winner.costPerTask}/task. Score = ${esc(picks.everyday.winner.sources || "50% DeepSWE + 50% Design Arena Frontend")}.`,
-  hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "50% DeepSWE + 50% Design Arena Frontend")}. Frontier quality without the frontier bill.`,
+  everyday: `Cheapest model clearing 90% of frontier blended coding quality at $${picks.everyday.winner.costPerTask}/task. Score = ${esc(picks.everyday.winner.sources || "50% AA Coding Agent Index + 50% Design Arena Frontend")}.`,
+  hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "50% AA Coding Agent Index + 50% Design Arena Frontend")}. Frontier quality without the frontier bill.`,
 };
 
 // WebMCP structured data response: first application/ld+json block on the
@@ -495,10 +496,10 @@ ${card("agent", "chat")}
 ${card("everyday", "everyday")}
 ${card("hard", "hard")}
 </main>
-<footer>Updated ${esc(calcDateStr)} ${esc(calcTimeStr)} - ${linkify("scores: AA Intelligence Index (chat), DeepSWE v1.1 + Design Arena Frontend (coding)")}</footer>
+<footer>Updated ${esc(calcDateStr)} ${esc(calcTimeStr)} - ${linkify("scores: AA Intelligence Index (chat), AA Coding Agent Index + Design Arena Frontend (coding)")}</footer>
 ${modal("agent", "chat", "AA Intelligence Index", 90, why.agent)}
-${modal("everyday", "everyday", "DeepSWE + Design Arena", 90, why.everyday)}
-${modal("hard", "hard", "DeepSWE + Design Arena", 97, why.hard)}
+${modal("everyday", "everyday", "AA Coding + Design Arena Frontend", 90, why.everyday)}
+${modal("hard", "hard", "AA Coding + Design Arena Frontend", 97, why.hard)}
 <script>
 (function(){
 function open(key){var m=document.getElementById("modal-"+key);if(m){m.classList.add("open");m.setAttribute("aria-hidden","false");}}
@@ -707,7 +708,7 @@ const llms = `# USE THIS MODEL
 
 > ${calcDateStr} picks (last successful calc: ${calcIsEstimate ? "unknown - data predates calc provenance" : calcUtc}): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
 
-Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 50% DeepSWE + 50% Design Arena Frontend (both min-max normalized 0-100; single-signal models pass at 100%).
+Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 50% AA Coding Agent Index + 50% Design Arena Frontend (both min-max normalized 0-100; single-signal models pass at 100%).
 
 ## Picks
 

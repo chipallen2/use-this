@@ -23,38 +23,10 @@ import { displayName, fullDisplayName } from "../scripts/display-name.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
-// SOURCE-GROUNDED FIXTURES (2026-10-16): independently fetched source
-// snapshots live under tests/fixtures/ (scrape.do L1 for the HTML boards,
-// direct public-API fetch for the Design Arena JSON board). The tests below
-// assert pool rows match the SOURCE names/scores - not just the local
-// candidates.json - so a stale label or mismatched score fails loudly.
-// Fixture provenance:
-//   deepswe-2026-10-16.html      DeepSWE board, claude-opus-5 pass_rate
-//                                0.7364864864864865 -> displayed 74% ± 4%
-//   design-arena-2026-10-16.json agon_webapps board, claude-opus-5 Elo 1259
-//   aa-models-2026-10-16.html    AA Intelligence Index (chat board):
-//                                Opus 5.5 (max) 58 @ $5.98 at top, legacy
-//                                Opus 5 rows deprecated (NOT on the board).
-// To refresh: re-fetch per tests/fixtures/README.md and carry the new
-// values into the pinned assertions (fixtures are snapshots, not live).
-const FIX_OPUS5_DEEP_RAW = 0.7364864864864865; // DeepSWE pass_rate for claude-opus-5 [max]
-const FIX_OPUS5_DEEP_PCT = 74;                 // displayed %, also pool deepRaw
-const FIX_OPUS5_DEEP_CONF = 4;                 // ± confidence
-const FIX_OPUS5_DEEP_COST = 11.84;             // pool costPerTask (DeepSWE avg cost)
-const FIX_OPUS5_DESIGN_ELO = 1259;             // Design Arena Elo for claude-opus-5
-const FIX_AA_OPUS55_SCORE = 58;                // AA chat board Opus 5.5 (max) index
-const FIX_AA_OPUS55_COST = 5.98;               // AA chat board Opus 5.5 (max) $/task
-
-// Parse the DeepSWE fixture: embedded board JSON carries the raw pass
-// rate; the rendered row HTML carries the displayed 74% ± 4%.
-function parseDeepSWEFixture() {
-  const html = readFileSync(join(HERE, "fixtures", "deepswe-2026-10-16.html"), "utf8");
-  const raw = html.match(/model:"claude-opus-5",harness:"mini-swe-agent",reasoning_effort:"max",config:"mini_swe_agent_claude_opus_5_max",source:"deep-swe",pass_rate:([\d.]+)/);
-  assert.ok(raw, "DeepSWE fixture carries claude-opus-5 [max] board JSON");
-  const disp = html.match(/claude-opus-5<\/span><span[^>]*>\[<!-- -->max<!-- -->\]<\/span><\/div><div[^>]*><span[^>]*><span[^>]*>(\d+)<!-- -->%<\/span><span[^>]*>±<!-- -->(\d+)<!-- -->%<\/span>/);
-  assert.ok(disp, "DeepSWE fixture renders the claude-opus-5 [max] 74% row");
-  return { passRate: Number(raw[1]), pct: Number(disp[1]), conf: Number(disp[2]) };
-}
+// Independently fetched source snapshots, never generated from candidates.json.
+const FIX_OPUS5_DESIGN_ELO = 1258;
+const FIX_AA_OPUS55_SCORE = 58;
+const FIX_AA_OPUS55_COST = 5.98;
 
 // Parse the Design Arena fixture: public API JSON, one row per modelId.
 function parseDesignFixture() {
@@ -267,7 +239,7 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
     const rows = await page.$$(`#modal-${key} tbody tr`);
     assert.equal(rows.length, cands[key].length, `${key}: table rows == pool (${cands[key].length})`);
     const dots = await page.$$(`#modal-${key} circle.dot`);
-    assert.equal(dots.length, cands[key].length, `${key}: chart dots == pool (${cands[key].length})`);
+    assert.equal(dots.length, cands[key].filter((p) => Number.isFinite(p.costPerTask)).length, `${key}: chart includes only priced rows`);
     // EVERY pool entry: its name/score pairing in the table row must match
     // candidates.json exactly (name from the same displayName map, score %
     // in the Combined/Score cell, thinking + price in their cells). No
@@ -284,12 +256,16 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
       assert.equal(cells[0], wantName, `${key} row ${i}: name "${cells[0]}" == pool "${wantName}"`);
       assert.equal(cells[1], e.effort ?? "default", `${key} row ${i}: thinking "${cells[1]}" == pool "${e.effort ?? "default"}"`);
       assert.equal(cells[scoreCol], `${e.score}%`, `${key} row ${i}: score "${cells[scoreCol]}" == pool "${e.score}%"`);
-      assert.equal(cells[priceCol], `$${e.costPerTask}`, `${key} row ${i}: price "${cells[priceCol]}" == pool "$${e.costPerTask}"`);
+      if (isCoding) {
+        assert.equal(cells[3], e.aaScore == null ? "-" : `${e.aaRaw}*`, `${key} row ${i}: AA signal paired with its model`);
+        assert.equal(cells[4], e.designScore == null ? "-" : `Elo ${e.designElo}*`, `${key} row ${i}: Design signal paired with its model`);
+      }
+      assert.equal(cells[priceCol], e.costPerTask == null ? "N/A" : `$${e.costPerTask}`, `${key} row ${i}: price "${cells[priceCol]}" == pool "$${e.costPerTask}"`);
     }
     // EVERY chart dot: data-name/data-score/data-cost must match the pool
     // entry it depicts (same display pairing, no mismatched scores).
     // Dots render sorted cost-asc; pair each dot against the cost-sorted pool.
-    const byCost = [...cands[key]].sort((a, b) => a.costPerTask - b.costPerTask);
+    const byCost = cands[key].filter((p) => Number.isFinite(p.costPerTask)).sort((a, b) => a.costPerTask - b.costPerTask);
     const dotAttrs = await page.$$eval(`#modal-${key} circle.dot`, (els) =>
       els.map((el) => ({ name: el.getAttribute("data-name"), score: el.getAttribute("data-score"), cost: el.getAttribute("data-cost") })));
     assert.equal(dotAttrs.length, byCost.length, `${key}: dot/pool lengths agree`);
@@ -308,39 +284,31 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
       const prov = await page.textContent(`#modal-${key} .provenance`);
       assert.ok(/Winner basis:/.test(prov), `${key}: provenance line present`);
     }
-    // Pinned regression (2026-10-16 Chip report): the everyday pool's
-    // legacy Opus 5 row must keep its own identity - full display name
-    // "Claude Opus 5", Opus-5 OpenRouter ID + pricing, DeepSWE raw 74% and
-    // Design Elo 1259, and must NOT resolve to the 5.5 twin. Both boards
-    // genuinely still carry legacy Opus 5 (DeepSWE leaderboard 2026-09-22
-    // snapshot; Design Arena modelId claude-opus-5, Elo 1259, live
-    // 2026-10-16), so the row is correct data, not a stale label.
+    // Source-grounded regression: old and new Opus identities keep their own
+    // AA coding index/cost and Design Elo. Neither score comes from DeepSWE.
     if (key === "everyday") {
       const opus = pool.find((e) => e.openRouterId === "anthropic/claude-opus-5");
-      assert.ok(opus, "everyday pool carries legacy anthropic/claude-opus-5");
-      assert.equal(opus.deepRaw, 74, "opus 5 DeepSWE raw stays 74");
-      assert.equal(opus.designElo, 1259, "opus 5 Design Elo stays 1259");
-      assert.equal(opus.costPerTask, 11.84, "opus 5 DeepSWE cost stays $11.84");
-      assert.notEqual(opus.openRouterId, "anthropic/claude-opus-5.5", "opus 5 never resolves to 5.5");
-      // SOURCE-GROUNDED: the pool row must match the independently
-      // fetched source fixtures, not just itself. DeepSWE raw
-      // 0.7364864865 -> 74% ± 4%; Design Elo 1259.
-      const ds = parseDeepSWEFixture();
-      assert.equal(ds.passRate, FIX_OPUS5_DEEP_RAW, `DeepSWE fixture pass_rate == ${FIX_OPUS5_DEEP_RAW}`);
-      assert.equal(ds.pct, FIX_OPUS5_DEEP_PCT, "DeepSWE fixture displays 74%");
-      assert.equal(ds.conf, FIX_OPUS5_DEEP_CONF, "DeepSWE fixture confidence ±4%");
-      assert.equal(opus.deepRaw, ds.pct, "pool deepRaw matches the DeepSWE source display %");
-      assert.equal(opus.confidence, ds.conf, "pool confidence matches the DeepSWE source ±");
-      assert.equal(opus.costPerTask, FIX_OPUS5_DEEP_COST, "pool cost matches the DeepSWE source avg cost");
+      const opus55 = pool.find((e) => e.openRouterId === "anthropic/claude-opus-5.5");
+      const sonnet55 = pool.find((e) => e.openRouterId === "anthropic/claude-sonnet-5.5");
+      assert.ok(opus && opus55 && sonnet55);
+      assert.equal(opus.aaRaw, 59.7, "Opus 5 AA coding source index");
+      assert.equal(opus.costPerTask, 10.79, "Opus 5 AA source cost");
+      assert.equal(opus55.aaRaw, 66, "Opus 5.5 AA coding source index");
+      assert.equal(opus55.costPerTask, 13.04, "Opus 5.5 AA source cost");
+      assert.equal(sonnet55.aaRaw, 68.4, "Sonnet 5.5 AA coding source index");
+      assert.equal(sonnet55.costPerTask, 14.19, "Sonnet 5.5 AA source cost");
       const dz = parseDesignFixture();
-      assert.equal(dz.row.elo, FIX_OPUS5_DESIGN_ELO, `Design fixture Elo == ${FIX_OPUS5_DESIGN_ELO}`);
-      assert.equal(opus.designElo, dz.row.elo, "pool designElo matches the Design source Elo");
-      assert.ok(!dz.legacy55, "Design source carries NO claude-opus-5.5 row - opus 5 is genuine, not a mis-resolve");
-      const opusIdx = pool.indexOf(opus);
-      const opusCells = await rows[opusIdx].$$eval("td", (tds) => tds.map((td) => td.textContent.trim()));
-      assert.equal(opusCells[0].replace(/ ★$/, ""), "Claude Opus 5", `opus row name stays "Claude Opus 5", got "${opusCells[0]}"`);
-      assert.equal(opusCells[scoreCol], `${opus.score}%`, "opus row score matches pool");
-      assert.equal(opusCells[priceCol], `$${opus.costPerTask}`, "opus row price matches pool");
+      assert.equal(dz.row.elo, FIX_OPUS5_DESIGN_ELO);
+      assert.equal(opus.designElo, dz.row.elo);
+      assert.ok(!dz.legacy55, "Frontend source has no Opus 5.5 row");
+      assert.equal(opus55.designElo, null);
+      assert.equal(opus55.sources, "AA Coding only - no Design Arena data yet");
+      assert.ok(modalText.includes("AA Coding"));
+      assert.ok(modalText.includes("Design Arena Frontend"));
+      assert.ok(!modalText.includes("DeepSWE"), "no standalone DeepSWE scoring labels");
+      const opusCells = await rows[pool.indexOf(opus)].$$eval("td", (tds) => tds.map((td) => td.textContent.trim()));
+      assert.equal(opusCells[0].replace(/ ★$/, ""), "Claude Opus 5");
+      assert.equal(opusCells[3], "59.7*", "AA column renders source index points");
     }
     await page.keyboard.press("Escape");
     await page.waitForSelector(`#modal-${key}.open`, { state: "detached", timeout: 5000 }).catch(() => {});
@@ -355,6 +323,9 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
 test("build: dist/index.html carries a real recalc endpoint, never a placeholder", () => {
   const html = readFileSync(join(ROOT, "dist", "index.html"), "utf8");
   assert.ok(!/PLACEHOLDER/i.test(html), "no placeholder anywhere in built HTML");
+  assert.ok(!/DeepSWE/.test(html), "standalone DeepSWE never appears in active scoring copy");
+  assert.ok(html.includes("AA Coding Agent Index"));
+  assert.ok(html.includes("Design Arena Frontend"));
   const m = html.match(/RECALC_ENDPOINT\s*=\s*"([^"]+)"/);
   const form = html.match(/<form[^>]*action="([^"]+)"/);
   assert.ok(m, "RECALC_ENDPOINT baked");
@@ -393,7 +364,7 @@ test("aa-crosscheck: versioned names resolve, legacy rows genuine (tolerant)", a
   assert.ok(!rows.has("Claude Opus 5 [max]"), "AA source current board has NO Opus 5 (max) row");
   const poolLegacyAgent = cands.agent.filter((e) => e.openRouterId === "anthropic/claude-opus-5");
   assert.equal(poolLegacyAgent.length, 0, "agent pool carries NO legacy opus-5 entries (chat board dropped them)");
-  // Coding side keeps BOTH genuinely: DeepSWE + Design still list opus 5.
+  // Coding side keeps BOTH genuinely: AA Coding + Design still list opus 5.
   const poolLegacyCoding = cands.everyday.filter((e) => e.openRouterId === "anthropic/claude-opus-5");
   assert.equal(poolLegacyCoding.length, 1, "coding pool keeps exactly one genuine legacy opus-5 row");
   // Contributor twin present alongside regular.
@@ -404,7 +375,7 @@ test("aa-crosscheck: versioned names resolve, legacy rows genuine (tolerant)", a
   // fails, on network trouble.
   const live = process.env.AA_LIVE_HTML;
   if (!live || !existsSync(live)) {
-    t.skip("no AA_LIVE_HTML snapshot - fixture core above already ran, live overlay skipped");
+    t.diagnostic("No optional AA_LIVE_HTML snapshot; all mandatory source-fixture assertions passed.");
     return;
   }
   const liveHtml = readFileSync(live, "utf8");

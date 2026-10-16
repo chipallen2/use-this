@@ -1,6 +1,6 @@
 // scripts/scrape.mjs — solidified model-selector. No LLM calls. No tokens.
-// Scrapes DeepSWE + AA Intelligence Index + OpenRouter catalog,
-// applies locked thresholds (agent 90%, everyday 90% DeepSWE, hard 97% DeepSWE),
+// Scrapes AA Coding Agent Index + AA Intelligence Index + OpenRouter catalog,
+// applies locked thresholds (agent 90%, everyday 90% AA coding, hard 97% AA coding),
 // writes candidates.json + picks.json to stdout dir.
 // Usage: node scripts/scrape.mjs [outdir]
 
@@ -14,7 +14,8 @@ const CONFIG = {
   everydayCodingMinQuality: 0.90,
   hardCodingMinQuality: 0.97,
   urls: {
-    deepSWE: "https://deepswe.datacurve.ai/",
+    // DEEPSWE_DISABLED (2026-10-16): deepSWE: "https://deepswe.datacurve.ai/",
+    codingAgents: "https://artificialanalysis.ai/agents/coding-agents",
     intelligenceIndex: "https://artificialanalysis.ai/leaderboards/models",
     openRouter: "https://openrouter.ai/api/v1/models",
     designArena: "https://www.designarena.ai/api/leaderboard",
@@ -36,7 +37,7 @@ const normalizeModelName = (name) =>
 
 // Version-signature: canonical digit string of the FIRST version-like run
 // in a normalized name. Dots and separators are equivalent ("5.1" ≡
-// "5 1" ≡ "5-1"), so AA "Fable 5.1", DeepSWE "fable-5.1" and Design
+// "5 1" ≡ "5-1"), so AA "Fable 5.1" and Design
 // Arena "claude-fable-5-1" all sign "51". Used by the version gate in
 // findOpenRouterModel: a needle carrying a version only matches an alias
 // carrying the SAME version ("opus 5" never takes "opus 5.5").
@@ -113,7 +114,7 @@ async function getOpenRouterModels() {
 }
 
 // Alias table: [aliasKey, openRouterIdPrefix, {eval}].
-// aliasKey matches against the NORMALIZED AA/DeepSWE display name with TOKEN
+// aliasKey matches against the NORMALIZED AA display name with TOKEN
 // BOUNDARIES - "gpt 6 sol" must NOT match "gpt 6.1 sol" even though one is
 // a substring of the other. Longest-key-first ordering is a second layer,
 // not the only defense: boundary + version-token checks (below) enforce it.
@@ -147,6 +148,19 @@ const MODEL_ALIASES = [
   ["claude-haiku-5.5", "anthropic/claude-haiku-5.5"],
   ["claude-fable-5.1", "anthropic/claude-fable-5.1"],
   ["claude-fable-5", "anthropic/claude-fable-5"],
+  // Vendor-less AA Coding Agent Index forms (2026-10-16): the coding board
+  // lists "Claude Code - Opus 5.5 (max)" (harness name replaces the vendor),
+  // so the needle carries no "claude" token. Explicit rows, same version
+  // gate + stem binding as every alias - "opus 5" never takes "opus 5.5".
+  ["opus-5.5", "anthropic/claude-opus-5.5"],
+  ["opus-5", "anthropic/claude-opus-5"],
+  ["sonnet-5.5", "anthropic/claude-sonnet-5.5"],
+  ["sonnet-5", "anthropic/claude-sonnet-5"],
+  ["fable-5.1", "anthropic/claude-fable-5.1"],
+  ["fable-5", "anthropic/claude-fable-5"],
+  ["haiku-5.5", "anthropic/claude-haiku-5.5"],
+  // Mirror "Beam 1.0" is Reflection's model on OpenRouter (2026-10-16).
+  ["beam-1.0", "reflection/beam-1.0-501b-a23b"],
   ["muse-wonder-full", "meta/muse-wonder"],
   ["muse-wonder", "meta/muse-wonder"],
   ["muse-glimmer", "meta/muse-glimmer-30b"],
@@ -350,7 +364,9 @@ function findOpenRouterModel(modelName, openRouterModels) {
     // not resolve to its "-contributor" twin (or vice versa).
     const exact = openRouterModels.find((m) => m.id === idPrefix);
     if (exact) return { kind: "alias", model: exact };
-    const hit = openRouterModels.find((m) => m.id.startsWith(`${idPrefix}`));
+    // A catalog prefix also needs a boundary: a missing opus-5 listing
+    // must never fall through to opus-5.5, even if the alias matched.
+    const hit = openRouterModels.find((m) => m.id.startsWith(`${idPrefix}-`) || m.id.startsWith(`${idPrefix}:`));
     if (hit) return { kind: "alias", model: hit };
   }
   return { kind: "unmatched", model: null };
@@ -430,6 +446,12 @@ async function scrapeDesignArena() {
     }));
 }
 
+// DEEPSWE_DISABLED (2026-10-16, Chip directive): coding signal source
+// swapped from DeepSWE to the AA Coding Agent Index. The fetch + parser
+// below are COMMENTED OUT, not deleted, so the swap is reversible.
+// The blend now reads 50% AA Coding Agent Index + 50% Design Arena
+// Frontend. No DeepSWE fetch or standalone score participates in picks.
+/*
 async function scrapeDeepSWE(browser) {
   const page = await browser.newPage();
   await page.goto(CONFIG.urls.deepSWE, { waitUntil: "networkidle", timeout: 120_000 });
@@ -466,8 +488,80 @@ async function scrapeDeepSWE(browser) {
       results.push({ rawName: `${model} [${effort}]`, model, effort, score, confidence, costPerTask: cost, outputTokens, steps });
     }
   }
-  if (!results.length) throw new Error("Could not parse DeepSWE leaderboard");
+    if (!results.length) throw new Error("Could not parse DeepSWE leaderboard");
   return results;
+}
+*/ // END DEEPSWE_DISABLED (2026-10-16)
+
+// AA Coding Agent Index (2026-10-16): the coding signal source.
+// The board page embeds one JSON entry per agent row (React Flight data):
+// displayLabel "<harness> - <model> [(effort)][ (with fallback)]" (or
+// "<model> (<effort>) ({'reasoning_effort': '<effort>'})" for Codex rows),
+// indexScore (0-1 composite of DeepSWE v1.1 + Terminal-Bench 4.0 +
+// SWE-Atlas-QnA) and mean.costUsd (avg $/task). Score = indexScore*100.
+// No browser needed: parse the embedded JSON from the fetched HTML.
+// Combo rows ("A + B", e.g. Devin Fusion dual-model) are dropped loudly -
+// they name two purchasable models under one score, so neither the matcher
+// (which would attribute the score to the first-named model) nor the winner
+// logic may claim them.
+// Fixture: tests/fixtures/aa-coding-2026-10-16.html (scrape.do L1).
+// Decode Flight string chunks before inspecting objects. Balanced JSON extraction
+// keeps a row's null/missing fields from borrowing the NEXT row's metrics.
+function parseAACodingHTML(html) {
+  const chunks = [...String(html).matchAll(/self\.__next_f\.push\((\[[\s\S]*?\])\)<\/script>/g)]
+    .map((m) => { try { const v = JSON.parse(m[1]); return typeof v[1] === "string" ? v[1] : ""; } catch { return ""; } });
+  const text = chunks.length ? chunks.join("") : String(html);
+  const starts = /\{"id":"[^"\n]+","isDefault":/g;
+  const results = [], seen = new Set(), comboDropped = [];
+  let match;
+  while ((match = starts.exec(text))) {
+    let depth = 0, quoted = false, escaped = false, end = -1;
+    for (let i = match.index; i < text.length; i++) {
+      const c = text[i];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (c === "\\") escaped = true;
+        else if (c === '"') quoted = false;
+      } else if (c === '"') quoted = true;
+      else if (c === "{") depth++;
+      else if (c === "}" && --depth === 0) { end = i + 1; break; }
+    }
+    if (end < 0) continue;
+    starts.lastIndex = end;
+    let row;
+    try { row = JSON.parse(text.slice(match.index, end)); } catch { continue; }
+    if (!row.displayLabel || !row.display?.model || seen.has(row.id)) continue;
+    seen.add(row.id);
+    if (row.displayLabel.includes(" + ")) { comboDropped.push(row.displayLabel); continue; }
+    if (typeof row.indexScore !== "number" || !Number.isFinite(row.indexScore)) continue;
+    // Effort belongs to the labelled configuration, not to a model suffix
+    // (Qwen3.8 Max is a model name). Some display.model values omit effort.
+    let config = row.displayLabel.replace(/^.*? - /, "").replace(/\s*\(with fallback\)\s*$/i, "");
+    const effort = config.match(/reasoning_effort['"]?:\s*['"](max|xhigh|high|medium|low|minimal)['"]/i)?.[1]?.toLowerCase()
+      ?? config.match(/\((max|xhigh|high|medium|low|minimal)\)/i)?.[1]?.toLowerCase() ?? null;
+    config = config.replace(/\s*\(\{[^}]*\}\)/g, "").replace(/\s*\((max|xhigh|high|medium|low|minimal)\)/gi, "").trim();
+    const mean = row.mean ?? {};
+    results.push({
+      rawName: row.displayLabel, model: config, effort,
+      score: round(row.indexScore * 100, 1),
+      costPerTask: typeof mean.costUsd === "number" && Number.isFinite(mean.costUsd) ? round(mean.costUsd, 2) : null,
+      steps: typeof mean.steps === "number" ? round(mean.steps, 1) : null,
+      inputTokens: typeof mean.inputTokens === "number" ? Math.round(mean.inputTokens) : null,
+      outputTokens: typeof mean.outputTokens === "number" ? Math.round(mean.outputTokens) : null,
+      isDefault: row.isDefault,
+    });
+  }
+  if (comboDropped.length) console.log(`AA coding combo rows dropped (dual-model, unattributable): ${comboDropped.join(" | ")}`);
+  if (!results.length) throw new Error("Could not parse AA Coding Agent Index board");
+  return results;
+}
+
+async function scrapeAACoding() {
+  const response = await fetch(CONFIG.urls.codingAgents, {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+  });
+  if (!response.ok) throw new Error(`AA Coding Agents HTTP ${response.status}`);
+  return parseAACodingHTML(await response.text());
 }
 
 async function scrapeIntelligenceIndex(browser) {
@@ -548,7 +642,7 @@ function attachOpenRouter(results, openRouterModels) {
 // scores (AA index, blend) at contributor prices. Cost/task rescales by the
 // per-entry blend ratio (contribBlend / regularBlend, (i + 3o)/4 over the
 // entry's own token counts when known, else the per-1M ratio) so observed
-// DeepSWE avg-cost token mixes rescale correctly. Twin displays as
+// AA avg-cost token mixes rescale correctly. Twin displays as
 // "Muse Spark 1.3 Contributor" via the render displayName map.
 function addContributorTwins(pool, openRouterModels) {
   const contrib = openRouterModels.find((m) => m.id === "meta/muse-spark-1.3-contributor");
@@ -563,7 +657,7 @@ function addContributorTwins(pool, openRouterModels) {
     if (x.costPerTask != null) {
       const pi = regular.promptPerMillion, po = regular.completionPerMillion;
       const ci = contrib.promptPerMillion, co = contrib.completionPerMillion;
-      // DeepSWE rows carry outputTokens; prompt tokens unknown - assume
+      // AA coding rows carry outputTokens; prompt tokens unknown - assume
       // 1:1 prompt:output mix (conservative; real mixes favor output, where
       // the discount is steepest).
       const ot = x.outputTokens ?? 0, pt = x.outputTokens ?? 0;
@@ -573,7 +667,7 @@ function addContributorTwins(pool, openRouterModels) {
     const twin = {
       ...x,
       openRouterId: "meta/muse-spark-1.3-contributor",
-      costPerTask: Math.max(0.01, round(x.costPerTask * ratio)),
+      costPerTask: x.costPerTask == null ? null : Math.max(0.01, round(x.costPerTask * ratio)),
       orPromptPerMillion: contrib.promptPerMillion,
       orCompletionPerMillion: contrib.completionPerMillion,
     };
@@ -583,10 +677,10 @@ function addContributorTwins(pool, openRouterModels) {
 }
 
 // Median blended-token usage (prompt + 3*completion, /1M scale divisor applied
-// by caller) across the DeepSWE pool, used to cost Design-only models at a
-// comparable scale to measured DeepSWE task costs.
-function medianUsageTokens(deepSWEPool) {
-  const toks = deepSWEPool
+// by caller) across the AA coding pool, used to cost Design-only models at a
+// comparable scale to measured AA coding task costs.
+function medianUsageTokens(aaCodingPool) {
+  const toks = aaCodingPool
     .map((d) => (d.orPromptPerMillion && d.orCompletionPerMillion && d.costPerTask
       ? d.costPerTask / (((d.orPromptPerMillion) + 3 * (d.orCompletionPerMillion)) / 4) * 1_000_000
       : null))
@@ -596,13 +690,8 @@ function medianUsageTokens(deepSWEPool) {
   return toks[Math.floor(toks.length / 2)];
 }
 
-// Blend rule (locked): per canonical model (openRouterId + effort), if both
-// DeepSWE and Design Arena scores present -> 50/50; only one -> use it at 100%.
-// Design Arena entries carry effort=null and costPerTask=null; they inherit
-// effort + cost from their DeepSWE counterpart when one exists, else effort
-// stays null and cost is estimated from blended per-1M pricing: Design Arena
-// registry price when available (same (3i+o)/4 formula their Pareto chart uses),
-// else OpenRouter (input + 3*output)/4 fallback; nominal 20k completion + 5k prompt tokens.
+// DEEPSWE_DISABLED (2026-10-16): historical standalone DeepSWE scoring.
+/*
 function blendCodingScores(deepSWEPool, designArenaPool) {
   const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null }
   // DeepSWE raw scores are percentages; min-max normalize across the pool to
@@ -656,9 +745,73 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
   return blended;
 }
 
+*/ // END DEEPSWE_DISABLED scoring
+
+// Blend rule (locked 2026-10-16): per canonical model (openRouterId +
+// effort), if both AA Coding Agent Index and Design Arena scores present ->
+// 50/50; only one -> use it at 100%. Design Arena entries carry effort=null
+// and costPerTask=null; they inherit effort + cost from their AA counterpart
+// when one exists, else effort stays null and cost is estimated from blended
+// per-1M pricing: Design Arena registry price when available (same (3i+o)/4
+// formula their Pareto chart uses), else OpenRouter (input + 3*output)/4
+// fallback; nominal 20k completion + 5k prompt tokens.
+function blendCodingScores(aaCodingPool, designArenaPool) {
+  const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null }
+  // AA coding raw scores are percentages (indexScore*100); min-max normalize
+  // across the pool to 0-100 so they blend apples-to-apples with normalized
+  // Design scores.
+  const raws = aaCodingPool.map((d) => d.score).filter((s) => Number.isFinite(s));
+  const aaMin = Math.min(...raws), aaMax = Math.max(...raws);
+  const normAA = (s) => aaMax > aaMin ? round(((s - aaMin) / (aaMax - aaMin)) * 100, 1) : 50;
+  for (const d of aaCodingPool) {
+    let g = byKey.get(d.openRouterId);
+    if (!g) { g = { efforts: new Map(), design: null }; byKey.set(d.openRouterId, g); }
+    g.efforts.set(d.effort ?? "default", d);
+  }
+  for (const z of designArenaPool) {
+    let g = byKey.get(z.openRouterId);
+    if (!g) { g = { efforts: new Map(), design: null }; byKey.set(z.openRouterId, g); }
+    g.design = z;
+  }
+  const blended = [];
+  for (const [, g] of byKey) {
+    if (g.efforts.size) {
+      for (const [, d] of g.efforts) {
+        if (g.design) {
+          const na = normAA(d.score);
+          blended.push({
+            ...d,
+            score: round((na + g.design.score) / 2, 1),
+            sources: "50% AA Coding Agent Index + 50% Design Arena Frontend",
+            aaScore: na, aaRaw: d.score, designScore: g.design.score, designElo: g.design.elo,
+            daPricePerMillion: g.design.daPricePerMillion ?? null,
+          });
+        } else {
+          blended.push({ ...d, score: normAA(d.score), sources: "AA Coding only - no Design Arena data yet", aaScore: normAA(d.score), aaRaw: d.score, designScore: null, designElo: null });
+        }
+      }
+    } else if (g.design) {
+      // Design-only model: no AA effort/cost; estimate cost/task from
+      // blended per-1M price (Design Arena registry first, OpenRouter fallback)
+      // at AA-scale token usage: median output+prompt tokens across the
+      // current AA coding pool, so the estimate is comparable to measured costs.
+      const z = g.design;
+      const perMillion = z.daPricePerMillion
+        ?? ((z.orPromptPerMillion ?? 0) + 3 * (z.orCompletionPerMillion ?? 0)) / 4;
+      const usageTokens = medianUsageTokens(aaCodingPool);
+      const estCost = round(perMillion * usageTokens / 1_000_000, 2);
+      blended.push({
+        ...z, effort: null, costPerTask: estCost,
+        sources: "Design Arena only - no AA Coding data yet", aaScore: null, aaRaw: null, designScore: z.score, designElo: z.elo,
+      });
+    }
+  }
+  return blended;
+}
+
 // Dedupe each pool to one entry per model (openRouterId): keep the highest-
 // scoring entry per model, carrying that entry's own effort label and cost.
-// The AA board and DeepSWE list models at multiple thinking levels, which
+// The AA boards list models at multiple thinking levels, which
 // otherwise renders as stacked near-identical dots (same price, ~same
 // score); the pick is per model, so chart + table + winner all use the
 // model's best variant.
@@ -672,7 +825,7 @@ function dedupeByModel(pool) {
 }
 
 function pickCheapestAbove(candidates, cutoff) {
-  const eligible = candidates.filter((x) => x.score >= cutoff)
+  const eligible = candidates.filter((x) => x.score >= cutoff && Number.isFinite(x.costPerTask) && x.costPerTask >= 0)
     .sort((a, b) => a.costPerTask - b.costPerTask || b.score - a.score);
   if (!eligible.length) throw new Error("No eligible model at cutoff " + cutoff);
   return eligible;
@@ -714,27 +867,37 @@ async function main() {
     const withPrice = board.filter((r) => r.daPricePerMillion != null).length;
     console.log(`Design Arena: ${board.length} models (${withPrice} with registry price)`);
   } catch (error) {
-    // No silent DeepSWE-only fallback: the 2026-10-14 coding boards went
+    // No silent AA-only fallback: the 2026-10-14 coding boards went
     // stale-looking exactly this way (a failed Design fetch redeployed as
     // fresh with half the signal missing). Flag + fail below.
     designArenaFailed = true;
     console.warn("Design Arena fetch failed:", error.message);
   }
+  console.log("Fetching AA Coding Agent Index...");
+  let aaCodingRaw = [];
+  let aaCodingFailed = false;
+  try {
+    aaCodingRaw = await scrapeAACoding();
+    console.log(`AA Coding: ${aaCodingRaw.length} rows`);
+  } catch (error) {
+    aaCodingFailed = true;
+    console.warn("AA Coding fetch failed:", error.message);
+  }
   console.log("Launching browser...");
   const browser = await chromium.launch({ headless: true });
-  let deepSWERaw, intelligenceRaw;
+  let intelligenceRaw;
   try {
-    console.log("Fetching DeepSWE...");
-    deepSWERaw = await scrapeDeepSWE(browser);
     console.log("Fetching Intelligence Index...");
     intelligenceRaw = await scrapeIntelligenceIndex(browser);
   } finally {
     await browser.close();
   }
 
-  const deepSWEPool = addContributorTwins(attachOpenRouter(deepSWERaw, openRouterModels), openRouterModels);
+  // Add contributor twins AFTER blending so they inherit both signals,
+  // never an AA-only score competing with their regular model blend.
+  const aaCodingPool = attachOpenRouter(aaCodingRaw, openRouterModels);
   const designPool = attachOpenRouter(designArenaRaw, openRouterModels);
-  const coding = dedupeByModel(addContributorTwins(blendCodingScores(deepSWEPool, designPool), openRouterModels));
+  const coding = dedupeByModel(addContributorTwins(blendCodingScores(aaCodingPool, designPool), openRouterModels));
   const agentPool = dedupeByModel(addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels));
 
   // GRACEFUL, never silently deploy stale data as fresh. A scrape that
@@ -755,8 +918,9 @@ async function main() {
   const unmatchedSummary = (list) => list.map((x) => `${x.rawName} -> ${x.openRouterId}`).join(" | ");
   failLoud(!intelligenceRaw.length, "AA Intelligence Index scrape returned 0 rows");
   failLoud(!agentPool.length, "AA agent pool empty after OpenRouter attach (all rows unmatched?)");
-  failLoud(!deepSWERaw.length, "DeepSWE scrape returned 0 rows");
-  failLoud(designArenaFailed, "Design Arena fetch failed - refusing DeepSWE-only deploy (stale-board cause 2026-10-14)");
+  failLoud(aaCodingFailed, "AA Coding Agent Index fetch failed - refusing Design-only deploy");
+  failLoud(!aaCodingRaw.length, "AA Coding Agent Index scrape returned 0 rows");
+  failLoud(designArenaFailed, "Design Arena fetch failed - refusing AA-only deploy (stale-board cause 2026-10-14)");
   failLoud(!designArenaRaw.length, "Design Arena scrape returned 0 rows");
   failLoud(!coding.length, "coding pool empty after blend");
   // Unmatched-model policy (GRACEFUL, 2026-10-14): unknown AA names are
@@ -813,8 +977,8 @@ async function main() {
     outputTokens: x.outputTokens ?? null, steps: x.steps ?? null,
     speed: x.speed ?? null, openRouterId: x.openRouterId,
     rawName: x.rawName ?? null, unmatched: x.unmatched ?? false,
-    sources: x.sources ?? null, deepScore: x.deepScore ?? null,
-    deepRaw: x.deepRaw ?? null,
+    sources: x.sources ?? null, aaScore: x.aaScore ?? null,
+    aaRaw: x.aaRaw ?? null,
     designScore: x.designScore ?? null, designElo: x.designElo ?? null,
     daPricePerMillion: x.daPricePerMillion ?? null,
   });
@@ -852,4 +1016,4 @@ if (SHOULD_RUN) main().catch((error) => { console.error(error); process.exit(1);
 // Test seam: matcher unit tests import the pure alias machinery without
 // launching a browser. `node --test tests/matcher.test.mjs` exercises
 // boundary/version/unmatched behavior against fake OpenRouter catalogs.
-export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, blendCodingScores, medianUsageTokens, addContributorTwins, pickCheapestAbove, pickCheapestMatched, isUnmatched };
+export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, parseAACodingHTML, scrapeAACoding, blendCodingScores, medianUsageTokens, addContributorTwins, pickCheapestAbove, pickCheapestMatched, isUnmatched };

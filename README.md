@@ -2,7 +2,7 @@
 
 "Today's best model for chatting, coding, and crazy-hard coding."
 
-Static `dist/index.html` rendered weekly by GitHub Actions (scraper: DeepSWE + AA
+Static `dist/index.html` rendered weekly by GitHub Actions (scraper: AA Coding Agent Index + Design Arena Frontend + AA
 Intelligence Index + OpenRouter catalog, no LLM calls). The "Recalculate for
 today" button hits a Supabase edge function that triggers a recompute unless
 the last calc is under 12h old.
@@ -14,8 +14,8 @@ npm install
 npx playwright install chromium
 npm run scrape   # writes data/picks.json + data/candidates.json
 npm run render   # writes dist/index.html (render-only: never moves the calc stamp)
-npm test         # 67 node:test cases: guard, lease, callbacks, workflow claim/stage/verify, frontend (incl. real human submit + polling + get_picks + schema validation), render, real-SQL PGlite
-npm run test:e2e # 2 Playwright regression tests: refresh flow + all 3 detail popups vs candidates.json
+npm test         # node:test suite: guard, lease, callbacks, workflow claim/stage/verify, frontend (incl. real human submit + polling + get_picks + schema validation), render, real-SQL PGlite
+npm run test:e2e # 2 Playwright browser cases plus 2 build/source checks
 ```
 
 Set `RECALC_URL` env when rendering for production (Supabase recalc endpoint).
@@ -23,6 +23,25 @@ Without it, render bakes the canonical production endpoint
 (`https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc`) - a
 missing env can never produce a placeholder. Any placeholder-looking value
 refuses to render (exit 1) so a broken endpoint can never deploy.
+
+## Coding source policy (2026-10-16)
+
+Coding = 50% AA Coding Agent Index + 50% Design Arena Frontend, each min-max
+normalized to 0-100. A model with only one signal uses that signal at 100%.
+AA URL: https://artificialanalysis.ai/agents/coding-agents. The agent index
+measures a named harness/configuration, not just bare model weights. AA
+already includes DeepSWE v1.1 as one of three components; the standalone
+DeepSWE fetch and blend implementation are retained in DEEPSWE_DISABLED
+comments but are never called. Frontend is the agon_webapps board, not Fullstack.
+
+Unknown model names remain NEW entries, never fuzzy-matched to an older
+version. Multi-model agent runs are excluded with a log because they cannot
+be attributed to one model. Missing AA task costs stay null, appear as N/A
+in the table, do not appear in price charts, and cannot win. Scores are
+never borrowed from neighboring rows when costs are unavailable.
+
+Source snapshots and pinned assertions must be refreshed together when
+leaderboard values change; see tests/fixtures/README.md.
 
 ## Deployment protocol (order matters)
 
@@ -45,7 +64,7 @@ refuses to render (exit 1) so a broken endpoint can never deploy.
 
 ## Infra
 
-- GitHub: `goferchip/use-this` (transfer to chipallen2 pending - see build notes)
+- GitHub: `chipallen2/use-this`
 - Vercel: auto-deploys `dist/` on push to main
 - Supabase: `supabase/` - `ut_state` table + `ut-recalc` edge fn + weekly pg_cron
 - Repo-local git identity is chipallen2 so Vercel builds deploy.
