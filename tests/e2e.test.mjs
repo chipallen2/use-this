@@ -23,6 +23,70 @@ import { displayName, fullDisplayName } from "../scripts/display-name.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
+// SOURCE-GROUNDED FIXTURES (2026-10-16): independently fetched source
+// snapshots live under tests/fixtures/ (scrape.do L1 for the HTML boards,
+// direct public-API fetch for the Design Arena JSON board). The tests below
+// assert pool rows match the SOURCE names/scores - not just the local
+// candidates.json - so a stale label or mismatched score fails loudly.
+// Fixture provenance:
+//   deepswe-2026-10-16.html      DeepSWE board, claude-opus-5 pass_rate
+//                                0.7364864864864865 -> displayed 74% ± 4%
+//   design-arena-2026-10-16.json agon_webapps board, claude-opus-5 Elo 1259
+//   aa-models-2026-10-16.html    AA Intelligence Index (chat board):
+//                                Opus 5.5 (max) 58 @ $5.98 at top, legacy
+//                                Opus 5 rows deprecated (NOT on the board).
+// To refresh: re-fetch per tests/fixtures/README.md and carry the new
+// values into the pinned assertions (fixtures are snapshots, not live).
+const FIX_OPUS5_DEEP_RAW = 0.7364864864864865; // DeepSWE pass_rate for claude-opus-5 [max]
+const FIX_OPUS5_DEEP_PCT = 74;                 // displayed %, also pool deepRaw
+const FIX_OPUS5_DEEP_CONF = 4;                 // ± confidence
+const FIX_OPUS5_DEEP_COST = 11.84;             // pool costPerTask (DeepSWE avg cost)
+const FIX_OPUS5_DESIGN_ELO = 1259;             // Design Arena Elo for claude-opus-5
+const FIX_AA_OPUS55_SCORE = 58;                // AA chat board Opus 5.5 (max) index
+const FIX_AA_OPUS55_COST = 5.98;               // AA chat board Opus 5.5 (max) $/task
+
+// Parse the DeepSWE fixture: embedded board JSON carries the raw pass
+// rate; the rendered row HTML carries the displayed 74% ± 4%.
+function parseDeepSWEFixture() {
+  const html = readFileSync(join(HERE, "fixtures", "deepswe-2026-10-16.html"), "utf8");
+  const raw = html.match(/model:"claude-opus-5",harness:"mini-swe-agent",reasoning_effort:"max",config:"mini_swe_agent_claude_opus_5_max",source:"deep-swe",pass_rate:([\d.]+)/);
+  assert.ok(raw, "DeepSWE fixture carries claude-opus-5 [max] board JSON");
+  const disp = html.match(/claude-opus-5<\/span><span[^>]*>\[<!-- -->max<!-- -->\]<\/span><\/div><div[^>]*><span[^>]*><span[^>]*>(\d+)<!-- -->%<\/span><span[^>]*>±<!-- -->(\d+)<!-- -->%<\/span>/);
+  assert.ok(disp, "DeepSWE fixture renders the claude-opus-5 [max] 74% row");
+  return { passRate: Number(raw[1]), pct: Number(disp[1]), conf: Number(disp[2]) };
+}
+
+// Parse the Design Arena fixture: public API JSON, one row per modelId.
+function parseDesignFixture() {
+  const board = JSON.parse(readFileSync(join(HERE, "fixtures", "design-arena-2026-10-16.json"), "utf8"));
+  assert.ok(board.success && Array.isArray(board.data) && board.data.length, "Design fixture is a populated board");
+  const row = board.data.find((r) => r.modelId === "claude-opus-5");
+  assert.ok(row, "Design fixture carries claude-opus-5");
+  const legacy55 = board.data.find((r) => r.modelId === "claude-opus-5.5" || r.modelId === "claude-opus-5-5");
+  return { board, row, legacy55 };
+}
+
+// Parse the AA chat-board fixture: rendered table rows (model, index, cost).
+// Returns Map(modelLabel -> { score, cost }) for current (non-deprecated) rows.
+function parseAAFixture() {
+  const html = readFileSync(join(HERE, "fixtures", "aa-models-2026-10-16.html"), "utf8");
+  const ti = html.indexOf("<table");
+  assert.ok(ti >= 0, "AA fixture carries the leaderboard table");
+  const parts = html.slice(ti, ti + 800000).split(/<tr[^>]*>/);
+  const strip = (s) => s.replace(/<!--[\s\S]*?-->/g, "").replace(/<[^>]+>/g, "|").replace(/\|+/g, "|");
+  const rows = new Map();
+  for (const p of parts.slice(2)) {
+    const cells = strip(p).split("|").filter((c) => c.trim() !== "");
+    if (cells.length < 5) continue;
+    // cells: Model | Context | Creator | Index | Cost ...
+    const m = cells[0].match(/^(.+?)\s*\((max|xhigh|high|medium|low|minimal)( with fallback)?\)$/i);
+    if (!m) continue;
+    rows.set(`${m[1].trim()} [${m[2].toLowerCase()}]`, { score: Number(cells[3]), cost: Number(String(cells[4]).replace("$", "")) });
+  }
+  assert.ok(rows.size > 50, `AA fixture parses to a full board (got ${rows.size} rows)`);
+  return { html, rows };
+}
+
 // Render CURRENT source + data into an ISOLATED temp dir (never dist/): the
 // checked-in dist/ tree must keep the canonical production endpoint baked
 // in, so e2e renders to a scratch copy with a fixture endpoint instead.
@@ -258,6 +322,20 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
       assert.equal(opus.designElo, 1259, "opus 5 Design Elo stays 1259");
       assert.equal(opus.costPerTask, 11.84, "opus 5 DeepSWE cost stays $11.84");
       assert.notEqual(opus.openRouterId, "anthropic/claude-opus-5.5", "opus 5 never resolves to 5.5");
+      // SOURCE-GROUNDED: the pool row must match the independently
+      // fetched source fixtures, not just itself. DeepSWE raw
+      // 0.7364864865 -> 74% ± 4%; Design Elo 1259.
+      const ds = parseDeepSWEFixture();
+      assert.equal(ds.passRate, FIX_OPUS5_DEEP_RAW, `DeepSWE fixture pass_rate == ${FIX_OPUS5_DEEP_RAW}`);
+      assert.equal(ds.pct, FIX_OPUS5_DEEP_PCT, "DeepSWE fixture displays 74%");
+      assert.equal(ds.conf, FIX_OPUS5_DEEP_CONF, "DeepSWE fixture confidence ±4%");
+      assert.equal(opus.deepRaw, ds.pct, "pool deepRaw matches the DeepSWE source display %");
+      assert.equal(opus.confidence, ds.conf, "pool confidence matches the DeepSWE source ±");
+      assert.equal(opus.costPerTask, FIX_OPUS5_DEEP_COST, "pool cost matches the DeepSWE source avg cost");
+      const dz = parseDesignFixture();
+      assert.equal(dz.row.elo, FIX_OPUS5_DESIGN_ELO, `Design fixture Elo == ${FIX_OPUS5_DESIGN_ELO}`);
+      assert.equal(opus.designElo, dz.row.elo, "pool designElo matches the Design source Elo");
+      assert.ok(!dz.legacy55, "Design source carries NO claude-opus-5.5 row - opus 5 is genuine, not a mis-resolve");
       const opusIdx = pool.indexOf(opus);
       const opusCells = await rows[opusIdx].$$eval("td", (tds) => tds.map((td) => td.textContent.trim()));
       assert.equal(opusCells[0].replace(/ ★$/, ""), "Claude Opus 5", `opus row name stays "Claude Opus 5", got "${opusCells[0]}"`);
@@ -285,24 +363,52 @@ test("build: dist/index.html carries a real recalc endpoint, never a placeholder
   assert.ok(/^https:\/\//.test(form[1]), "recalc form action is a real https URL, got: " + form[1]);
 });
 
-// AA cross-check (task 6c): tolerant by design - warns, never fails, on
-// network trouble. When AA_LIVE_HTML points at a fetched leaderboard copy,
-// asserts the key versioned names resolve per the graceful policy: Opus 5.5
-// winner distinct from genuine legacy Opus 5 rows (both must exist), and the
-// Muse Spark contributor twin is present.
+// AA cross-check (task 6c, SOURCE-GROUNDED 2026-10-16): asserts the pool
+// against the independently fetched AA Intelligence Index (chat board)
+// fixture. The pool's Opus 5.5 winner must carry the SOURCE's name, score
+// and cost (58 @ $5.98, max effort); legacy Opus 5 must be ABSENT from the
+// CURRENT board (deprecated, flag in the source JSON) AND absent from the
+// pool's agent side - so a 5.5->5 mis-resolution fails loudly. Tolerant by
+// design on LIVE network: skips when no fresh fetch is requested. The
+// fixture path always runs - snapshots, not live calls.
 test("aa-crosscheck: versioned names resolve, legacy rows genuine (tolerant)", async (t) => {
-  const live = process.env.AA_LIVE_HTML;
-  if (!live || !existsSync(live)) {
-    t.skip("no AA_LIVE_HTML snapshot - network fetch is manual-only, not CI");
-    return;
-  }
-  const html = readFileSync(live, "utf8");
   const cands = JSON.parse(readFileSync(join(ROOT, "data", "candidates.json"), "utf8"));
-  const top = [...cands.agent].sort((a, b) => b.score - a.score).slice(0, 8).map((r) => r.model);
-  // Opus 5.5 must be the resolved winner family AND legacy Opus 5 rows must
-  // genuinely exist on the AA board (not mis-resolution artifacts).
-  assert.ok(/Claude Opus 5 \(/.test(html), "legacy Opus 5 rows are genuine AA rows");
-  assert.ok(top.some((m) => /Opus 5\.5/.test(m)), "Opus 5.5 resolves at top: " + top.join(" | "));
+  // SOURCE-GROUNDED CORE: pool vs the AA chat-board fixture. Runs always.
+  const { html, rows } = parseAAFixture();
+  const src55 = rows.get("Claude Opus 5.5 [max]");
+  assert.ok(src55, "AA source board carries Claude Opus 5.5 (max)");
+  assert.equal(src55.score, FIX_AA_OPUS55_SCORE, `AA source Opus 5.5 index == ${FIX_AA_OPUS55_SCORE}`);
+  assert.equal(src55.cost, FIX_AA_OPUS55_COST, `AA source Opus 5.5 cost == $${FIX_AA_OPUS55_COST}`);
+  const pool55 = cands.agent.find((e) => e.openRouterId === "anthropic/claude-opus-5.5" && (e.effort ?? "default") === "max");
+  assert.ok(pool55, "agent pool carries anthropic/claude-opus-5.5 [max]");
+  assert.equal(pool55.score, src55.score, "pool Opus 5.5 score matches the AA source index");
+  assert.equal(pool55.costPerTask, src55.cost, "pool Opus 5.5 cost matches the AA source $/task");
+  assert.equal(pool55.model, "Claude Opus 5.5", "pool Opus 5.5 name matches the AA source name");
+  // Legacy Opus 5: deprecated in the source page JSON (NOT on the current
+  // board) and must NOT appear in the agent pool - a 5.5 row resolving to
+  // a 5 id (or vice versa) fails here.
+  // NOTE: the fixture is raw page HTML - quotes inside the embedded JSON
+  // are backslash-escaped (\\\"), so the regex matches the escaped form.
+  assert.ok(/Claude Opus 5 \(max\)\\",\\"deprecated\\":true/.test(html), "AA source marks legacy Opus 5 deprecated");
+  assert.ok(!rows.has("Claude Opus 5 [max]"), "AA source current board has NO Opus 5 (max) row");
+  const poolLegacyAgent = cands.agent.filter((e) => e.openRouterId === "anthropic/claude-opus-5");
+  assert.equal(poolLegacyAgent.length, 0, "agent pool carries NO legacy opus-5 entries (chat board dropped them)");
+  // Coding side keeps BOTH genuinely: DeepSWE + Design still list opus 5.
+  const poolLegacyCoding = cands.everyday.filter((e) => e.openRouterId === "anthropic/claude-opus-5");
+  assert.equal(poolLegacyCoding.length, 1, "coding pool keeps exactly one genuine legacy opus-5 row");
+  // Contributor twin present alongside regular.
   const spark = cands.agent.filter((r) => /muse-spark-1\.3/.test(r.openRouterId || ""));
   assert.ok(spark.length >= 2, "contributor twin present alongside regular");
+  // LIVE overlay (optional): AA_LIVE_HTML points at a freshly fetched
+  // leaderboard copy for a same-day spot check. Tolerant - warns, never
+  // fails, on network trouble.
+  const live = process.env.AA_LIVE_HTML;
+  if (!live || !existsSync(live)) {
+    t.skip("no AA_LIVE_HTML snapshot - fixture core above already ran, live overlay skipped");
+    return;
+  }
+  const liveHtml = readFileSync(live, "utf8");
+  const top = [...cands.agent].sort((a, b) => b.score - a.score).slice(0, 8).map((r) => r.model);
+  assert.ok(top.some((m) => /Opus 5\.5/.test(m)), "Opus 5.5 resolves at top: " + top.join(" | "));
+  assert.ok(/Claude Opus 5\.5/.test(liveHtml), "live AA copy still carries Opus 5.5");
 });
