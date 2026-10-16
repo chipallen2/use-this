@@ -13,29 +13,39 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, copyFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, dirname, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
-const DIST = join(ROOT, "dist");
+
+// Render CURRENT source + data into an ISOLATED temp dir (never dist/): the
+// checked-in dist/ tree must keep the canonical production endpoint baked
+// in, so e2e renders to a scratch copy with a fixture endpoint instead.
+// Returns the temp dir serving as the static root.
 
 const MIME = { ".html": "text/html", ".json": "application/json", ".txt": "text/plain", ".png": "image/png", ".ico": "image/x-icon", ".svg": "image/svg+xml" };
 
-// Render CURRENT source to dist/ first so e2e always tests fresh output.
+// Render CURRENT source to a scratch dir first so e2e always tests fresh output.
 function renderDist() {
-  execFileSync("node", [join(ROOT, "scripts", "render.mjs"), join(ROOT, "data"), join(DIST, "index.html")],
+  const dir = mkdtempSync(join(tmpdir(), "ut-e2e-"));
+  for (const f of ["picks.json", "candidates.json", "calc.json"]) {
+    copyFileSync(join(ROOT, "data", f), join(dir, f));
+  }
+  execFileSync("node", [join(ROOT, "scripts", "render.mjs"), dir, join(dir, "index.html")],
     { env: { ...process.env, RECALC_URL: "https://x.test/fn" } });
+  return dir;
 }
 
-function startStatic(extra = {}) {
+function startStatic(root, extra = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url, "http://x");
     if (extra[url.pathname]) return extra[url.pathname](req, res);
     let p = url.pathname === "/" ? "/index.html" : url.pathname;
-    const file = join(DIST, p);
+    const file = join(root, p);
     if (!existsSync(file)) { res.writeHead(404); res.end("no"); return; }
     res.writeHead(200, { "Content-Type": MIME[extname(file)] ?? "application/octet-stream" });
     res.end(readFileSync(file));
@@ -50,8 +60,8 @@ function json(res, obj, status = 200) {
 }
 
 test("e2e: refresh click with genuinely newer server stamp reloads fresh; stale/failure do not", async (t) => {
-  renderDist();
-  const baked = JSON.parse(readFileSync(join(DIST, "data-calc.json"), "utf8")).calc_utc;
+  const dir = renderDist();
+  const baked = JSON.parse(readFileSync(join(dir, "data-calc.json"), "utf8")).calc_utc;
   const newer = new Date(new Date(baked).getTime() + 3600e3).toISOString();
   // The recalc endpoint is baked into the page at render time
   // (https://x.test/fn here) - route it at the request level to a fixture,
@@ -60,7 +70,7 @@ test("e2e: refresh click with genuinely newer server stamp reloads fresh; stale/
   // completed deploy landing.
   let liveCalc = baked;
   let recalcMode = "started"; // started | fail
-  const server = await startStatic();
+  const server = await startStatic(dir);
   t.after(() => server.close());
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -113,8 +123,8 @@ test("e2e: refresh click with genuinely newer server stamp reloads fresh; stale/
 });
 
 test("e2e: all three detail popups match candidates.json pools", async (t) => {
-  renderDist();
-  const server = await startStatic();
+  const e2eDir = renderDist();
+  const server = await startStatic(e2eDir);
   t.after(() => server.close());
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -161,4 +171,40 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
   }
   assert.deepEqual(errors, [], "no page errors across all three modals");
   await page.close();
+});
+
+// Static build-output assertions (task 6a): the checked-in dist/ tree must
+// carry a REAL recalc endpoint everywhere, never a placeholder. Runs against
+// the production render script output directly - no browser needed.
+test("build: dist/index.html carries a real recalc endpoint, never a placeholder", () => {
+  const html = readFileSync(join(ROOT, "dist", "index.html"), "utf8");
+  assert.ok(!/PLACEHOLDER/i.test(html), "no placeholder anywhere in built HTML");
+  const m = html.match(/RECALC_ENDPOINT\s*=\s*"([^"]+)"/);
+  const form = html.match(/<form[^>]*action="([^"]+)"/);
+  assert.ok(m, "RECALC_ENDPOINT baked");
+  assert.ok(/^https:\/\//.test(m[1]), "RECALC_ENDPOINT is a real https URL, got: " + m[1]);
+  assert.ok(form, "recalc form present");
+  assert.ok(/^https:\/\//.test(form[1]), "recalc form action is a real https URL, got: " + form[1]);
+});
+
+// AA cross-check (task 6c): tolerant by design - warns, never fails, on
+// network trouble. When AA_LIVE_HTML points at a fetched leaderboard copy,
+// asserts the key versioned names resolve per the graceful policy: Opus 5.5
+// winner distinct from genuine legacy Opus 5 rows (both must exist), and the
+// Muse Spark contributor twin is present.
+test("aa-crosscheck: versioned names resolve, legacy rows genuine (tolerant)", async (t) => {
+  const live = process.env.AA_LIVE_HTML;
+  if (!live || !existsSync(live)) {
+    t.skip("no AA_LIVE_HTML snapshot - network fetch is manual-only, not CI");
+    return;
+  }
+  const html = readFileSync(live, "utf8");
+  const cands = JSON.parse(readFileSync(join(ROOT, "data", "candidates.json"), "utf8"));
+  const top = [...cands.agent].sort((a, b) => b.score - a.score).slice(0, 8).map((r) => r.model);
+  // Opus 5.5 must be the resolved winner family AND legacy Opus 5 rows must
+  // genuinely exist on the AA board (not mis-resolution artifacts).
+  assert.ok(/Claude Opus 5 \(/.test(html), "legacy Opus 5 rows are genuine AA rows");
+  assert.ok(top.some((m) => /Opus 5\.5/.test(m)), "Opus 5.5 resolves at top: " + top.join(" | "));
+  const spark = cands.agent.filter((r) => /muse-spark-1\.3/.test(r.openRouterId || ""));
+  assert.ok(spark.length >= 2, "contributor twin present alongside regular");
 });
