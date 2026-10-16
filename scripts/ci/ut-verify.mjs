@@ -72,7 +72,7 @@ if (invokedDirectly) {
   const liveUrl = process.argv[2] ?? LIVE_DEFAULT;
   const expectedUtc = process.argv[3] ?? process.env.CALC_UTC;
   const fetcher = async (url) => {
-    const r = await fetch(url, { cache: "no-store" });
+    const r = await fetch(url, { cache: "no-store", headers: { "Cache-Control": "no-cache" } });
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
   };
