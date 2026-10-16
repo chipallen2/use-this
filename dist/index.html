@@ -95,7 +95,7 @@ tr.below td{opacity:.55}
 <div class="pick-date">
 <span class="calc-stamp"><time datetime="2026-10-16T20:38:47.000Z">Picks for October 16, 2026</time><span class="calc-time" data-calc-utc="2026-10-16T20:38:47.000Z">1:38pm PDT</span></span>
 <!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
-<form id="recalc-form" method="POST" action="https://x.test/fn" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh, recalculation-started, in-progress, or a truthful error." toolautosubmit>
+<form id="recalc-form" method="POST" action="https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh, recalculation-started, in-progress, or a truthful error." toolautosubmit>
 <button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
 </form>
 <p class="recalc-status" id="recalc-status" role="status" aria-live="polite"></p>
@@ -311,7 +311,7 @@ tsvg.querySelectorAll(".ygrid-full").forEach(function(g){g.style.display=full?""
 // inputSchema, execute}) per https://webmachinelearning.github.io/webmcp/
 // Declarative API: toolname/tooldescription/toolautosubmit on the recalc
 // <form> per declarative-api-explainer.md in that repo.
-var RECALC_ENDPOINT="https://x.test/fn";
+var RECALC_ENDPOINT="https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc";
 function collectPicks(){
 var out={};
 try{var ct=document.querySelector(".calc-time");var utc=ct&&ct.getAttribute("data-calc-utc");if(utc)out.data_calc_utc=utc;}catch(e){}
