@@ -4,3 +4,4 @@ node_modules/
 # the persisted calc provenance and MUST be committable too.
 .vercel
 !cli-latest
+test-results/
