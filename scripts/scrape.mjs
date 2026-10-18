@@ -19,6 +19,8 @@ const CONFIG = {
     intelligenceIndex: "https://artificialanalysis.ai/leaderboards/models",
     openRouter: "https://openrouter.ai/api/v1/models",
     designArena: "https://www.designarena.ai/api/leaderboard",
+    valsPage: (slug) => `https://vals.ai/benchmarks/${slug}`,
+    valsJson: (path) => `https://vals.ai/_astro/${path}`,
   },
   designArenaBody: { arenaType: "agents", category: "agon_webapps", variationName: "public", inputModality: "text" },
 };
@@ -32,7 +34,16 @@ const normalizeModelName = (name) =>
     // "design arena:" post-normalization form here via two passes: first
     // strip the raw prefix, then the normalized one).
     .replace(/design-arena\s*:\s*/g, "")
-    .replace(/[()[\]]/g, " ").replace(/[-_:]/g, " ").replace(/\s+/g, " ").trim()
+    // VALS vendor prefix: their ids are vendor-prefixed bare slugs
+    // ("anthropic/claude-sonnet-5-5", "zai/glm-5.3", "grok/grok-4.6").
+    // The vendor token carries no identity - the family alias already says
+    // "opus"/"glm"/"grok" - and foreign vendor tokens actively corrupt
+    // version gating ("zai" would inject digits? no - worse: "grok/grok"
+    // doubles tokens, "ant/ling" looks versionless). Strip everything up
+    // to and including the first slash. Applied before separator
+    // normalization so "muse_spark_1_3_max"-style underscores still split.
+    .replace(/^[^\s]*\//, "")
+    .replace(/[()[\]]/g, " ").replace(/[-_:/]/g, " ").replace(/\s+/g, " ").trim()
     .replace(/^design arena\s+/, "");
 
 // Version-signature: canonical digit string of the FIRST version-like run
@@ -415,6 +426,65 @@ async function getDesignArenaPricing() {
   return map;
 }
 
+// VALS coding benches (2026-10-18): three independent benchmarks from
+// vals.ai, each with its own accuracy scale. Live fetch: the benchmark
+// page HTML embeds the hashed _astro JSON path
+// (benchmark_view_<slug>.<hash>.json); scrape discovers it via regex
+// (same pattern as the AA Flight parse - hashes rotate on site rebuilds,
+// so NEVER hardcode them), then fetches the JSON and reads
+// tasks.overall[<modelId>].accuracy keyed by vendor-prefixed bare slug
+// ("anthropic/claude-sonnet-5-5"). The vendor token is stripped by
+// normalizeModelName (slash-prefix rule), so ids resolve through the
+// existing MODEL_ALIASES table + version gate + stem binding - no new
+// matcher code, same anti-mislabel guards.
+// Weight design (locked): AA Coding 35% + Design Arena 25% + each VALS
+// bench 40/3% (~13.33%). AA + Design stay the majority (60%) because
+// they carry measured $/task costs and multi-effort rows; the three VALS
+// benches add independent coding signal at equal weight. Missing signals
+// are excluded from BOTH numerator and denominator (renormalized), so a
+// model absent from a bench is never penalized - only relatively less
+// informed. Score shown in the table is the renormalized blend.
+const VALS_BENCHES = [
+  { key: "vibe", name: "VALS Vibe Code", slug: "vibe-code", blendKey: "valsVibe" },
+  { key: "vcb", name: "VALS VCB 1-100", slug: "vcb-1-100", blendKey: "valsVcb" },
+  { key: "swe", name: "VALS SWE Multimodal", slug: "swebench-multimodal", blendKey: "valsSwe" },
+];
+const VALS_WEIGHTS = { aa: 0.35, design: 0.25, valsVibe: 0.40 / 3, valsVcb: 0.40 / 3, valsSwe: 0.40 / 3 };
+
+// Parse one VALS _astro JSON doc into [{ model, score }] raw accuracies.
+// Malformed per-model rows are skipped, never borrowed from neighbors.
+// Throws when the doc carries zero usable rows (fail-loud in main).
+function parseVALSJson(json, benchName) {
+  const overall = json?.tasks?.overall;
+  if (!overall || typeof overall !== "object" || Array.isArray(overall)) {
+    throw new Error(`${benchName}: no tasks.overall map in JSON`);
+  }
+  const rows = [];
+  for (const [modelId, v] of Object.entries(overall)) {
+    const acc = v?.accuracy;
+    if (typeof acc === "number" && Number.isFinite(acc) && typeof modelId === "string" && modelId) {
+      rows.push({ rawName: modelId, model: modelId, effort: null, score: round(acc, 3) });
+    }
+  }
+  if (!rows.length) throw new Error(`${benchName}: 0 usable accuracy rows`);
+  return rows;
+}
+
+async function fetchVALSBench(bench) {
+  const pageRes = await fetch(CONFIG.urls.valsPage(bench.slug), {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+  });
+  if (!pageRes.ok) throw new Error(`${bench.name} page HTTP ${pageRes.status}`);
+  const html = await pageRes.text();
+  const m = html.match(/_astro\/(benchmark_view_[^"]*?\.json)/);
+  if (!m) throw new Error(`${bench.name}: no _astro benchmark_view JSON path in page HTML`);
+  const jsonRes = await fetch(CONFIG.urls.valsJson(m[1]), {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" },
+  });
+  if (!jsonRes.ok) throw new Error(`${bench.name} JSON HTTP ${jsonRes.status}`);
+  return parseVALSJson(await jsonRes.json(), bench.name);
+}
+
 async function scrapeDesignArena() {
   // Design Arena agentic Web App board (Frontend tab = agon_webapps).
   // Plain fetch works: POST JSON to their public leaderboard API.
@@ -747,63 +817,103 @@ function blendCodingScores(deepSWEPool, designArenaPool) {
 
 */ // END DEEPSWE_DISABLED scoring
 
-// Blend rule (locked 2026-10-16): per canonical model (openRouterId +
-// effort), if both AA Coding Agent Index and Design Arena scores present ->
-// 50/50; only one -> use it at 100%. Design Arena entries carry effort=null
-// and costPerTask=null; they inherit effort + cost from their AA counterpart
-// when one exists, else effort stays null and cost is estimated from blended
-// per-1M pricing: Design Arena registry price when available (same (3i+o)/4
-// formula their Pareto chart uses), else OpenRouter (input + 3*output)/4
-// fallback; nominal 20k completion + 5k prompt tokens.
-function blendCodingScores(aaCodingPool, designArenaPool) {
-  const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null }
-  // AA coding raw scores are percentages (indexScore*100); min-max normalize
-  // across the pool to 0-100 so they blend apples-to-apples with normalized
-  // Design scores.
-  const raws = aaCodingPool.map((d) => d.score).filter((s) => Number.isFinite(s));
-  const aaMin = Math.min(...raws), aaMax = Math.max(...raws);
-  const normAA = (s) => aaMax > aaMin ? round(((s - aaMin) / (aaMax - aaMin)) * 100, 1) : 50;
-  for (const d of aaCodingPool) {
-    let g = byKey.get(d.openRouterId);
-    if (!g) { g = { efforts: new Map(), design: null }; byKey.set(d.openRouterId, g); }
-    g.efforts.set(d.effort ?? "default", d);
+// Blend rule (locked 2026-10-18): per canonical model (openRouterId +
+// effort), five coding signals each min-max normalized to 0-100 within
+// its own board, then combined at fixed weights:
+//   AA Coding Agent Index 35% + Design Arena Frontend 25% +
+//   VALS Vibe Code 13.33% + VALS VCB 1-100 13.33% + VALS SWE-MM 13.33%.
+// RENORMALIZATION: for each model, sum weights of PRESENT signals only
+// and divide by the present-weight total. A missing signal is excluded
+// from both numerator and denominator - never a zero, never a penalty.
+// (Sonnet 5.5: absent from Design + VCB-1-100, still scores fairly from
+// AA + Vibe + SWE at 35+13.33+13.33 = 61.67% of weight, renormalized.)
+// Design Arena entries carry effort=null and costPerTask=null; they
+// inherit effort + cost from their AA counterpart when one exists, else
+// effort stays null and cost is estimated from blended per-1M pricing:
+// Design Arena registry price when available (same (3i+o)/4 formula
+// their Pareto chart uses), else OpenRouter (input + 3*output)/4
+// fallback; median AA-scale blended token usage.
+function blendCodingScores(aaCodingPool, designArenaPool, valsPools = {}) {
+  const minMax = (vals) => {
+    const xs = vals.filter((s) => Number.isFinite(s));
+    if (!xs.length) return () => null;
+    const lo = Math.min(...xs), hi = Math.max(...xs);
+    return (s) => (hi > lo ? round(((s - lo) / (hi - lo)) * 100, 1) : 50);
+  };
+  const normAA = minMax(aaCodingPool.map((d) => d.score));
+  const normDesign = minMax(designArenaPool.map((d) => d.score));
+  const normVals = {};
+  for (const b of VALS_BENCHES) normVals[b.blendKey] = minMax((valsPools[b.key] ?? []).map((d) => d.score));
+  const byKey = new Map(); // openRouterId -> { efforts: Map(effort -> entry), design: entry|null, vals: {key: entry} }
+  const grp = (id) => {
+    let g = byKey.get(id);
+    if (!g) { g = { efforts: new Map(), design: null, vals: {} }; byKey.set(id, g); }
+    return g;
+  };
+  for (const d of aaCodingPool) grp(d.openRouterId).efforts.set(d.effort ?? "default", d);
+  for (const z of designArenaPool) grp(z.openRouterId).design = z;
+  for (const b of VALS_BENCHES) {
+    for (const v of valsPools[b.key] ?? []) {
+      const g = grp(v.openRouterId);
+      if (!g.vals[b.key] || v.score > g.vals[b.key].score) g.vals[b.key] = v;
+    }
   }
-  for (const z of designArenaPool) {
-    let g = byKey.get(z.openRouterId);
-    if (!g) { g = { efforts: new Map(), design: null }; byKey.set(z.openRouterId, g); }
-    g.design = z;
-  }
+  const blendOne = (aa, design, vals) => {
+    // signals: [{w, norm, raw, label}]; missing -> excluded entirely.
+    const sigs = [];
+    if (aa) sigs.push({ w: VALS_WEIGHTS.aa, norm: normAA(aa.score), raw: aa.score, label: "AA" });
+    if (design) sigs.push({ w: VALS_WEIGHTS.design, norm: design.score, raw: design.elo, label: "Design" });
+    for (const b of VALS_BENCHES) {
+      const v = vals[b.key];
+      if (v) sigs.push({ w: VALS_WEIGHTS[b.blendKey], norm: normVals[b.blendKey](v.score), raw: v.score, label: b.name });
+    }
+    const wSum = sigs.reduce((a, s) => a + s.w, 0);
+    const score = wSum > 0 ? round(sigs.reduce((a, s) => a + s.w * s.norm, 0) / wSum, 1) : 50;
+    const present = sigs.map((s) => s.label);
+    const sources = sigs.length === 5
+      ? "35% AA Coding + 25% Design Frontend + 13.3% each VALS Vibe/VCB/SWE"
+      : `${present.join(" + ")} (renormalized - ${5 - sigs.length} signal${5 - sigs.length === 1 ? "" : "s"} absent)`;
+    return { score, sources, sigs };
+  };
   const blended = [];
   for (const [, g] of byKey) {
     if (g.efforts.size) {
       for (const [, d] of g.efforts) {
-        if (g.design) {
-          const na = normAA(d.score);
-          blended.push({
-            ...d,
-            score: round((na + g.design.score) / 2, 1),
-            sources: "50% AA Coding Agent Index + 50% Design Arena Frontend",
-            aaScore: na, aaRaw: d.score, designScore: g.design.score, designElo: g.design.elo,
-            daPricePerMillion: g.design.daPricePerMillion ?? null,
-          });
-        } else {
-          blended.push({ ...d, score: normAA(d.score), sources: "AA Coding only - no Design Arena data yet", aaScore: normAA(d.score), aaRaw: d.score, designScore: null, designElo: null });
+        const { score, sources } = blendOne(d, g.design, g.vals);
+        const out = {
+          ...d, score, sources,
+          aaScore: normAA(d.score), aaRaw: d.score,
+          designScore: g.design ? g.design.score : null, designElo: g.design ? g.design.elo : null,
+          daPricePerMillion: g.design?.daPricePerMillion ?? null,
+        };
+        for (const b of VALS_BENCHES) {
+          const v = g.vals[b.key];
+          out[`${b.blendKey}Score`] = v ? normVals[b.blendKey](v.score) : null;
+          out[`${b.blendKey}Raw`] = v ? v.score : null;
         }
+        blended.push(out);
       }
-    } else if (g.design) {
-      // Design-only model: no AA effort/cost; estimate cost/task from
-      // blended per-1M price (Design Arena registry first, OpenRouter fallback)
-      // at AA-scale token usage: median output+prompt tokens across the
-      // current AA coding pool, so the estimate is comparable to measured costs.
-      const z = g.design;
+    } else {
+      // Model with no AA row: base entry off its best available signal
+      // (Design or VALS) for effort/cost inheritance, same blend math.
+      const z = g.design ?? Object.values(g.vals)[0];
+      if (!z) continue;
+      const { score, sources } = blendOne(null, g.design, g.vals);
       const perMillion = z.daPricePerMillion
         ?? ((z.orPromptPerMillion ?? 0) + 3 * (z.orCompletionPerMillion ?? 0)) / 4;
       const usageTokens = medianUsageTokens(aaCodingPool);
       const estCost = round(perMillion * usageTokens / 1_000_000, 2);
-      blended.push({
-        ...z, effort: null, costPerTask: estCost,
-        sources: "Design Arena only - no AA Coding data yet", aaScore: null, aaRaw: null, designScore: z.score, designElo: z.elo,
-      });
+      const out = {
+        ...z, effort: null, costPerTask: estCost, score, sources,
+        aaScore: null, aaRaw: null,
+        designScore: g.design ? g.design.score : null, designElo: g.design ? g.design.elo : null,
+      };
+      for (const b of VALS_BENCHES) {
+        const v = g.vals[b.key];
+        out[`${b.blendKey}Score`] = v ? normVals[b.blendKey](v.score) : null;
+        out[`${b.blendKey}Raw`] = v ? v.score : null;
+      }
+      blended.push(out);
     }
   }
   return blended;
@@ -883,6 +993,22 @@ async function main() {
     aaCodingFailed = true;
     console.warn("AA Coding fetch failed:", error.message);
   }
+  console.log("Fetching VALS benches...");
+  const valsRaw = {};
+  let valsFailed = [];
+  {
+    const settled = await Promise.allSettled(VALS_BENCHES.map(async (b) => ({ key: b.key, rows: await fetchVALSBench(b) })));
+    for (let i = 0; i < settled.length; i++) {
+      const b = VALS_BENCHES[i], s = settled[i];
+      if (s.status === "fulfilled") {
+        valsRaw[b.key] = s.value.rows;
+        console.log(`${b.name}: ${s.value.rows.length} models`);
+      } else {
+        valsFailed.push(b.name);
+        console.warn(`${b.name} fetch failed:`, s.reason?.message ?? s.reason);
+      }
+    }
+  }
   console.log("Launching browser...");
   const browser = await chromium.launch({ headless: true });
   let intelligenceRaw;
@@ -897,7 +1023,9 @@ async function main() {
   // never an AA-only score competing with their regular model blend.
   const aaCodingPool = attachOpenRouter(aaCodingRaw, openRouterModels);
   const designPool = attachOpenRouter(designArenaRaw, openRouterModels);
-  const coding = dedupeByModel(addContributorTwins(blendCodingScores(aaCodingPool, designPool), openRouterModels));
+  const valsPools = {};
+  for (const b of VALS_BENCHES) valsPools[b.key] = attachOpenRouter(valsRaw[b.key] ?? [], openRouterModels);
+  const coding = dedupeByModel(addContributorTwins(blendCodingScores(aaCodingPool, designPool, valsPools), openRouterModels));
   const agentPool = dedupeByModel(addContributorTwins(attachOpenRouter(intelligenceRaw, openRouterModels), openRouterModels));
 
   // GRACEFUL, never silently deploy stale data as fresh. A scrape that
@@ -922,6 +1050,8 @@ async function main() {
   failLoud(!aaCodingRaw.length, "AA Coding Agent Index scrape returned 0 rows");
   failLoud(designArenaFailed, "Design Arena fetch failed - refusing AA-only deploy (stale-board cause 2026-10-14)");
   failLoud(!designArenaRaw.length, "Design Arena scrape returned 0 rows");
+  failLoud(valsFailed.length === VALS_BENCHES.length, `all VALS benches failed (${valsFailed.join(", ")}) - refusing stale deploy`);
+  if (valsFailed.length) console.warn(`SCRAPE WARNING (deploying anyway): VALS partial outage - ${valsFailed.join(", ")} absent, blends renormalized without them`);
   failLoud(!coding.length, "coding pool empty after blend");
   // Unmatched-model policy (GRACEFUL, 2026-10-14): unknown AA names are
   // KEPT as their own NEW-tagged entries (see toUnmatchedEntry), so they
@@ -978,7 +1108,10 @@ async function main() {
     speed: x.speed ?? null, openRouterId: x.openRouterId,
     rawName: x.rawName ?? null, unmatched: x.unmatched ?? false,
     sources: x.sources ?? null, aaScore: x.aaScore ?? null,
-    aaRaw: x.aaRaw ?? null,
+    aaRaw: x.aaRaw ?? null, valsVibeScore: x.valsVibeScore ?? null,
+    valsVibeRaw: x.valsVibeRaw ?? null, valsVcbScore: x.valsVcbScore ?? null,
+    valsVcbRaw: x.valsVcbRaw ?? null, valsSweScore: x.valsSweScore ?? null,
+    valsSweRaw: x.valsSweRaw ?? null,
     designScore: x.designScore ?? null, designElo: x.designElo ?? null,
     daPricePerMillion: x.daPricePerMillion ?? null,
   });
@@ -1016,4 +1149,4 @@ if (SHOULD_RUN) main().catch((error) => { console.error(error); process.exit(1);
 // Test seam: matcher unit tests import the pure alias machinery without
 // launching a browser. `node --test tests/matcher.test.mjs` exercises
 // boundary/version/unmatched behavior against fake OpenRouter catalogs.
-export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, parseAACodingHTML, scrapeAACoding, blendCodingScores, medianUsageTokens, addContributorTwins, pickCheapestAbove, pickCheapestMatched, isUnmatched };
+export { normalizeModelName, versionSig, tokenSet, aliasHits, MODEL_ALIASES, findOpenRouterModel, toUnmatchedEntry, attachOpenRouter, parseAACodingHTML, scrapeAACoding, blendCodingScores, medianUsageTokens, addContributorTwins, pickCheapestAbove, pickCheapestMatched, isUnmatched, parseVALSJson, fetchVALSBench, VALS_BENCHES, VALS_WEIGHTS };

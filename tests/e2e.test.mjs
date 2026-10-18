@@ -24,13 +24,13 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 
 // Independently fetched source snapshots, never generated from candidates.json.
-const FIX_OPUS5_DESIGN_ELO = 1258;
+const FIX_OPUS5_DESIGN_ELO = 1265;
 const FIX_AA_OPUS55_SCORE = 58;
 const FIX_AA_OPUS55_COST = 5.98;
 
 // Parse the Design Arena fixture: public API JSON, one row per modelId.
 function parseDesignFixture() {
-  const board = JSON.parse(readFileSync(join(HERE, "fixtures", "design-arena-2026-10-16.json"), "utf8"));
+  const board = JSON.parse(readFileSync(join(HERE, "fixtures", "design-arena-2026-10-18.json"), "utf8"));
   assert.ok(board.success && Array.isArray(board.data) && board.data.length, "Design fixture is a populated board");
   const row = board.data.find((r) => r.modelId === "claude-opus-5");
   assert.ok(row, "Design fixture carries claude-opus-5");
@@ -247,7 +247,7 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
     // Rows render sorted score-desc; pair each row against the sorted pool.
     const pool = [...cands[key]].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask);
     const isCoding = key !== "agent";
-    const scoreCol = isCoding ? 2 : 2, priceCol = isCoding ? 5 : 3;
+    const scoreCol = 2, priceCol = isCoding ? 8 : 3;
     assert.equal(rows.length, pool.length, `${key}: row/pool lengths agree`);
     for (let i = 0; i < pool.length; i++) {
       const e = pool[i];
@@ -259,6 +259,10 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
       if (isCoding) {
         assert.equal(cells[3], e.aaScore == null ? "-" : `${e.aaRaw}*`, `${key} row ${i}: AA signal paired with its model`);
         assert.equal(cells[4], e.designScore == null ? "-" : `Elo ${e.designElo}*`, `${key} row ${i}: Design signal paired with its model`);
+        for (const [ci, k] of [[5, "valsVibe"], [6, "valsVcb"], [7, "valsSwe"]]) {
+          const want = e[`${k}Score`] == null ? "-" : `${e[`${k}Score`]}%`;
+          assert.equal(cells[ci], want, `${key} row ${i}: ${k} "${cells[ci]}" == pool "${want}"`);
+        }
       }
       assert.equal(cells[priceCol], e.costPerTask == null ? "N/A" : `$${e.costPerTask}`, `${key} row ${i}: price "${cells[priceCol]}" == pool "$${e.costPerTask}"`);
     }
@@ -302,7 +306,11 @@ test("e2e: all three detail popups match candidates.json pools", async (t) => {
       assert.equal(opus.designElo, dz.row.elo);
       assert.ok(!dz.legacy55, "Frontend source has no Opus 5.5 row");
       assert.equal(opus55.designElo, null);
-      assert.equal(opus55.sources, "AA Coding only - no Design Arena data yet");
+      // Opus 5.5 still has no Design Arena row (checked above), but by now
+      // VALS benches have landed for it too - sources should reflect AA +
+      // whichever VALS signals are present, never a stale "AA Coding only" label.
+      assert.ok(/^AA/.test(opus55.sources), "Opus 5.5 sources start with AA");
+      assert.ok(!/Design Arena/.test(opus55.sources), "Opus 5.5 sources exclude Design Arena (no row yet)");
       assert.ok(modalText.includes("AA Coding"));
       assert.ok(modalText.includes("Design Arena Frontend"));
       assert.ok(!modalText.includes("DeepSWE"), "no standalone DeepSWE scoring labels");
@@ -325,6 +333,10 @@ test("build: dist/index.html carries a real recalc endpoint, never a placeholder
   assert.ok(!/PLACEHOLDER/i.test(html), "no placeholder anywhere in built HTML");
   assert.ok(!/DeepSWE/.test(html), "standalone DeepSWE never appears in active scoring copy");
   assert.ok(html.includes("AA Coding Agent Index"));
+  assert.ok(html.includes("table-scroll"), "tables wrapped in mobile scroll container");
+  assert.ok(html.includes("VIBE") || html.includes(">Vibe<"), "VALS Vibe column present");
+  assert.ok(html.includes(">VCB<"), "VALS VCB column present");
+  assert.ok(html.includes(">SWE<"), "VALS SWE column present");
   assert.ok(html.includes("Design Arena Frontend"));
   const m = html.match(/RECALC_ENDPOINT\s*=\s*"([^"]+)"/);
   const form = html.match(/<form[^>]*action="([^"]+)"/);
