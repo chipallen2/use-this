@@ -1,6 +1,6 @@
 # USE THIS MODEL
 
-> October 18, 2026 picks (last successful calc: 2026-10-18T13:40:38.000Z): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
+> October 19, 2026 picks (last successful calc: 2026-10-19T18:19:54.000Z): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
 
 Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE, renormalized when signals absent.
 
