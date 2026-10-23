@@ -1,18 +1,18 @@
 {
-  "date": "2026-10-19",
+  "date": "2026-10-23",
   "agent": {
     "winner": {
-      "model": "Muse Spark 1.3",
+      "model": "GPT-6.1 Sol",
       "effort": "max",
-      "score": 48,
-      "relative": 90.6,
+      "score": 52,
+      "relative": 94.5,
       "confidence": null,
-      "costPerTask": 0.08,
+      "costPerTask": 0.72,
       "outputTokens": null,
       "steps": null,
-      "speed": 133,
-      "openRouterId": "meta/muse-spark-1.3-contributor",
-      "rawName": "Muse Spark 1.3 (max)",
+      "speed": 54,
+      "openRouterId": "openai/gpt-6.1-sol",
+      "rawName": "GPT-6.1 Sol (max)",
       "unmatched": false,
       "sources": null,
       "aaScore": null,
@@ -27,17 +27,17 @@
       "designElo": null,
       "daPricePerMillion": null
     },
-    "bestScore": 53,
-    "cutoff": 47.7
+    "bestScore": 55,
+    "cutoff": 49.5
   },
   "everyday": {
     "winner": {
       "model": "xiaomi/mimo-v2.6-flash",
       "effort": null,
       "score": 85.5,
-      "relative": 90.5,
+      "relative": 91.1,
       "confidence": null,
-      "costPerTask": 0.13,
+      "costPerTask": 0.19,
       "outputTokens": null,
       "steps": null,
       "speed": null,
@@ -57,37 +57,37 @@
       "designElo": null,
       "daPricePerMillion": null
     },
-    "bestScore": 94.5,
-    "cutoff": 85.05
+    "bestScore": 93.9,
+    "cutoff": 84.51
   },
   "hard": {
     "winner": {
       "model": "Opus 5.5",
       "effort": "max",
-      "score": 94.5,
+      "score": 93.9,
       "relative": 100,
       "confidence": null,
-      "costPerTask": 13.04,
-      "outputTokens": 333177,
-      "steps": 155.1,
+      "costPerTask": 11.42,
+      "outputTokens": 279420,
+      "steps": 146.4,
       "speed": null,
       "openRouterId": "anthropic/claude-opus-5.5",
       "rawName": "Claude Code - Opus 5.5 (max)",
       "unmatched": false,
-      "sources": "AA + VALS Vibe Code + VALS VCB 1-100 + VALS SWE Multimodal (renormalized - 1 signal absent)",
-      "aaScore": 94.1,
-      "aaRaw": 66,
+      "sources": "35% AA Coding + 25% Design Frontend + 13.3% each VALS Vibe/VCB/SWE",
+      "aaScore": 100,
+      "aaRaw": 61.7,
       "valsVibeScore": 97.7,
       "valsVibeRaw": 90.294,
       "valsVcbScore": 86.7,
       "valsVcbRaw": 30.361,
       "valsSweScore": 100,
       "valsSweRaw": 70.208,
-      "designScore": null,
-      "designElo": null,
-      "daPricePerMillion": null
+      "designScore": 83.9,
+      "designElo": 1316,
+      "daPricePerMillion": 8
     },
-    "bestScore": 94.5,
-    "cutoff": 91.66
+    "bestScore": 93.9,
+    "cutoff": 91.08
   }
 }
