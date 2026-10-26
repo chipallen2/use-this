@@ -1,5 +1,5 @@
 {
-  "date": "2026-10-23",
+  "date": "2026-10-26",
   "agent": {
     "winner": {
       "model": "GPT-6.1 Sol",
@@ -10,7 +10,7 @@
       "costPerTask": 0.72,
       "outputTokens": null,
       "steps": null,
-      "speed": 54,
+      "speed": 66,
       "openRouterId": "openai/gpt-6.1-sol",
       "rawName": "GPT-6.1 Sol (max)",
       "unmatched": false,
@@ -35,7 +35,7 @@
       "model": "xiaomi/mimo-v2.6-flash",
       "effort": null,
       "score": 85.5,
-      "relative": 91.1,
+      "relative": 91,
       "confidence": null,
       "costPerTask": 0.19,
       "outputTokens": null,
@@ -57,14 +57,14 @@
       "designElo": null,
       "daPricePerMillion": null
     },
-    "bestScore": 93.9,
-    "cutoff": 84.51
+    "bestScore": 94,
+    "cutoff": 84.6
   },
   "hard": {
     "winner": {
       "model": "Opus 5.5",
       "effort": "max",
-      "score": 93.9,
+      "score": 94,
       "relative": 100,
       "confidence": null,
       "costPerTask": 11.42,
@@ -83,11 +83,11 @@
       "valsVcbRaw": 30.361,
       "valsSweScore": 100,
       "valsSweRaw": 70.208,
-      "designScore": 83.9,
-      "designElo": 1316,
+      "designScore": 84.3,
+      "designElo": 1318,
       "daPricePerMillion": 8
     },
-    "bestScore": 93.9,
-    "cutoff": 91.08
+    "bestScore": 94,
+    "cutoff": 91.18
   }
 }
