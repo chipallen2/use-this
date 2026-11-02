@@ -1,14 +1,14 @@
 # USE THIS MODEL
 
-> October 26, 2026 picks (last successful calc: 2026-10-26T18:12:23.000Z): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
+> November 2, 2026 picks (last successful calc: 2026-11-02T21:23:01.000Z): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
 
 Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE, renormalized when signals absent.
 
 ## Picks
 
-- [Chatting: GPT 6.1 sol (max thinking)](https://usethismodel.vercel.app/) - $0.72/task, quality 94.5%, copy-paste OpenRouter ID: `openai/gpt-6.1-sol`
-- [Everyday Coding: MiMo V2.6 Pro (default)](https://usethismodel.vercel.app/) - $0.19/task, quality 91%, copy-paste OpenRouter ID: `xiaomi/mimo-v2.6-flash`
-- [Crazy Hard Coding: Claude Opus 5.5 (max thinking)](https://usethismodel.vercel.app/) - $11.42/task, quality 100%, copy-paste OpenRouter ID: `anthropic/claude-opus-5.5`
+- [Chatting: GPT 6.1 sol (max thinking)](https://usethismodel.vercel.app/) - $1.27/task, quality 100%, copy-paste OpenRouter ID: `openai/gpt-6.1-sol`
+- [Everyday Coding: Claude Opus 5.5 (default)](https://usethismodel.vercel.app/) - $11.42/task, quality 98.7%, copy-paste OpenRouter ID: `anthropic/claude-opus-5.5`
+- [Crazy Hard Coding: Claude Opus 5.5 (default)](https://usethismodel.vercel.app/) - $11.42/task, quality 98.7%, copy-paste OpenRouter ID: `anthropic/claude-opus-5.5`
 
 ## Full page
 
