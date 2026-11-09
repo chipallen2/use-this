@@ -1,5 +1,5 @@
 {
-  "date": "2026-11-02",
+  "date": "2026-11-09",
   "agent": {
     "winner": {
       "model": "GPT-6.1 Sol",
@@ -10,7 +10,7 @@
       "costPerTask": 1.27,
       "outputTokens": null,
       "steps": null,
-      "speed": 89,
+      "speed": 19.9,
       "openRouterId": "openai/gpt-6.1-sol",
       "rawName": "GPT-6.1 Sol (max)",
       "unmatched": false,
@@ -34,8 +34,8 @@
     "winner": {
       "model": "Claude Opus 5.5 (Max, Default Fallback)",
       "effort": null,
-      "score": 94.4,
-      "relative": 98.7,
+      "score": 95.9,
+      "relative": 100,
       "confidence": null,
       "costPerTask": 11.42,
       "outputTokens": 279420,
@@ -47,25 +47,25 @@
       "sources": "35% AA Coding + 25% Design Frontend + 13.3% each VALS Vibe/VCB/SWE",
       "aaScore": 100,
       "aaRaw": 61.7,
-      "valsVibeScore": 97.7,
+      "valsVibeScore": 96.3,
       "valsVibeRaw": 90.294,
       "valsVcbScore": 86.7,
       "valsVcbRaw": 30.361,
       "valsSweScore": 100,
       "valsSweRaw": 70.208,
-      "designScore": 86.1,
-      "designElo": 1308,
+      "designScore": 92.7,
+      "designElo": 1320,
       "daPricePerMillion": 8
     },
-    "bestScore": 95.6,
-    "cutoff": 86.04
+    "bestScore": 95.9,
+    "cutoff": 86.31
   },
   "hard": {
     "winner": {
       "model": "Claude Opus 5.5 (Max, Default Fallback)",
       "effort": null,
-      "score": 94.4,
-      "relative": 98.7,
+      "score": 95.9,
+      "relative": 100,
       "confidence": null,
       "costPerTask": 11.42,
       "outputTokens": 279420,
@@ -77,17 +77,17 @@
       "sources": "35% AA Coding + 25% Design Frontend + 13.3% each VALS Vibe/VCB/SWE",
       "aaScore": 100,
       "aaRaw": 61.7,
-      "valsVibeScore": 97.7,
+      "valsVibeScore": 96.3,
       "valsVibeRaw": 90.294,
       "valsVcbScore": 86.7,
       "valsVcbRaw": 30.361,
       "valsSweScore": 100,
       "valsSweRaw": 70.208,
-      "designScore": 86.1,
-      "designElo": 1308,
+      "designScore": 92.7,
+      "designElo": 1320,
       "daPricePerMillion": 8
     },
-    "bestScore": 95.6,
-    "cutoff": 92.73
+    "bestScore": 95.9,
+    "cutoff": 93.02
   }
 }
