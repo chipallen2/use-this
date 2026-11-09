@@ -10,7 +10,7 @@
       "costPerTask": 1.27,
       "outputTokens": null,
       "steps": null,
-      "speed": 19.9,
+      "speed": 20.2,
       "openRouterId": "openai/gpt-6.1-sol",
       "rawName": "GPT-6.1 Sol (max)",
       "unmatched": false,
@@ -34,7 +34,7 @@
     "winner": {
       "model": "Claude Opus 5.5 (Max, Default Fallback)",
       "effort": null,
-      "score": 95.9,
+      "score": 95.8,
       "relative": 100,
       "confidence": null,
       "costPerTask": 11.42,
@@ -53,18 +53,18 @@
       "valsVcbRaw": 30.361,
       "valsSweScore": 100,
       "valsSweRaw": 70.208,
-      "designScore": 92.7,
+      "designScore": 92.4,
       "designElo": 1320,
       "daPricePerMillion": 8
     },
-    "bestScore": 95.9,
-    "cutoff": 86.31
+    "bestScore": 95.8,
+    "cutoff": 86.22
   },
   "hard": {
     "winner": {
       "model": "Claude Opus 5.5 (Max, Default Fallback)",
       "effort": null,
-      "score": 95.9,
+      "score": 95.8,
       "relative": 100,
       "confidence": null,
       "costPerTask": 11.42,
@@ -83,11 +83,11 @@
       "valsVcbRaw": 30.361,
       "valsSweScore": 100,
       "valsSweRaw": 70.208,
-      "designScore": 92.7,
+      "designScore": 92.4,
       "designElo": 1320,
       "daPricePerMillion": 8
     },
-    "bestScore": 95.9,
-    "cutoff": 93.02
+    "bestScore": 95.8,
+    "cutoff": 92.93
   }
 }
