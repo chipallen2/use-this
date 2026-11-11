@@ -1,1 +1,8 @@
-{"buildCommand": "", "installCommand": "", "outputDirectory": "dist"}
+{
+  "buildCommand": "",
+  "installCommand": "",
+  "outputDirectory": "dist",
+  "git": {
+    "deploymentEnabled": false
+  }
+}

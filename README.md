@@ -2,10 +2,29 @@
 
 "Today's best model for chatting, coding, and crazy-hard coding."
 
-Static `dist/index.html` rendered weekly by GitHub Actions (scraper: AA Coding Agent Index + Design Arena Frontend + AA
-Intelligence Index + OpenRouter catalog, no LLM calls). The "Recalculate for
-today" button hits a Supabase edge function that triggers a recompute unless
-the last calc is under 12h old.
+Static `dist/index.html` built from public benchmarks: AA Coding Agent Index,
+Design Arena Frontend, AA Intelligence Index, and the OpenRouter catalog.
+The scraper makes no LLM calls.
+
+Contributions are welcome: fork the repository, work on a branch, and open a
+pull request against `main`. Anyone can open issues and PRs; only maintainers
+can merge changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and review
+expectations, and [SECURITY.md](SECURITY.md) for private vulnerability reports.
+
+## Automation and costs
+
+GitHub Actions is currently **disabled in the repository settings** while this
+manual-only configuration is being rolled out. Opening a PR needs no workflow.
+The workflow in this checkout has no push, PR, or scheduled triggers. It accepts
+only an owner-triggered dispatch on `main` with the confirmation value `RUN`.
+Legacy dispatches from the public recalculate endpoint do not satisfy that
+confirmation and are rejected before a runner is allocated. The updated edge
+function rejects public/cron recalculation requests entirely.
+
+Vercel Git auto-deployments are disabled by `git.deploymentEnabled: false` in
+`vercel.json`; explicit CLI deployments remain available. These local changes
+have no effect on deployed services until pushed/deployed. Existing Supabase
+cron jobs and hosting/storage usage are separate from GitHub Actions.
 
 ## Local
 
@@ -43,28 +62,45 @@ never borrowed from neighboring rows when costs are unavailable.
 Source snapshots and pinned assertions must be refreshed together when
 leaderboard values change; see tests/fixtures/README.md.
 
-## Deployment protocol (order matters)
+## Maintainer rollout (before re-enabling Actions)
 
-1. `supabase/migrations/20260924_ut_recalc_lease.sql` - apply ONCE via
-   dashboard SQL or `supabase db push` (adds lease columns + 3 RPCs,
-   preserves all rows). Verify: no live lease
-   (`recalc_in_progress_since` null) before Monday runs.
-2. Set GH secrets: `RECALC_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-   (as `UT_SUPABASE_SERVICE_KEY`), `UT_COMPLETE_TOKEN`, `GITHUB_TOKEN`,
-   `VERCEL_TOKEN`. Edge fn needs `GITHUB_TOKEN` + `UT_COMPLETE_TOKEN` too.
-3. Deploy edge fn: `supabase functions deploy ut-recalc` (ships
-   `index.ts` + `handler.mjs`). It is the ONLY writer of `last_calc`.
-4. Merge this branch. The weekly workflow then self-orders: claim lease ->
-   scrape+render -> commit+push -> deploy from repo root -> verify the
-   canonical `data-calc.json` timestamp live -> completion callback stamps
-   `last_calc`. Any failure releases the lease (2h TTL backstop).
-5. Dedup later: pg_cron `ut-weekly-recalc` (12:05 UTC) and GH cron (12:00
-   UTC) share the same edge-fn guard - first claim wins, the other no-ops.
-   Keep both until verified, then drop one.
+1. Review and push these changes to `main` yourself. Repository administrators
+   retain the default branch-protection bypass; external contributors use PRs.
+2. Deploy the updated `ut-recalc` function with `supabase functions deploy
+   ut-recalc`. Its public recalculate endpoint will return a maintainer-only
+   error; completion/failure callbacks still require `UT_COMPLETE_TOKEN`.
+   Remove the edge function's old `GITHUB_TOKEN` secret after deployment.
+3. In Supabase, disable the existing `ut-weekly-recalc` pg_cron job. The changed
+   function refuses it, but disabling the job also avoids unnecessary requests.
+4. In Vercel, verify Git auto-deployments are disabled for this project before
+   accepting contributor changes. The checked-in Vercel configuration disables
+   automatic branch deployments; dashboard/deploy-hook settings are separate.
+5. The original lease migration must already be applied:
+   `supabase/migrations/20260924_ut_recalc_lease.sql`. Required GitHub secrets:
+   `SUPABASE_URL`, `UT_SUPABASE_SERVICE_KEY`, `UT_COMPLETE_TOKEN`, `RECALC_URL`,
+   `VERCEL_TOKEN`, `VERCEL_PROJECT_ID`, and `VERCEL_ORG_ID`. The service key
+   stays in Actions secrets, never browser code or contributor forks.
+6. To preserve generated data in protected `main`, set `UT_REPO_WRITE_TOKEN`
+   to an owner-issued fine-grained token scoped only to this repository with
+   Contents read/write access. The owner must retain branch-protection bypass.
+   The default `GITHUB_TOKEN` cannot bypass the PR requirement. Do not broaden
+   the repository's default workflow permissions or enable bot PR approvals.
+7. Only after the above is complete, re-enable Actions. Go to Actions →
+   `weekly-recompute` → Run workflow, choose `main`, and type `RUN`.
+   Each confirmed run may consume Actions resources and deploy to production.
+   The existing one-hour freshness guard can still skip a run, and a live lease
+   prevents concurrent recomputes.
+
+The manual job claims a lease directly using Supabase's service-only RPC,
+scrapes and renders, commits generated data, deploys through the Vercel CLI,
+verifies the live calculation timestamp, then reports completion. Failed runs
+release their owned lease; the two-hour TTL remains a backstop.
 
 ## Infra
 
-- GitHub: `chipallen2/use-this`
-- Vercel: auto-deploys `dist/` on push to main
-- Supabase: `supabase/` - `ut_state` table + `ut-recalc` edge fn + weekly pg_cron
-- Repo-local git identity is chipallen2 so Vercel builds deploy.
+- GitHub: `chipallen2/use-this`; public forks, issues, and PRs.
+- Vercel: serves `dist/`; production deployment is explicitly requested.
+- Supabase: state/lease RPCs and authenticated completion/failure callbacks.
+- No project license has been selected yet. Public visibility by itself does
+  not grant open-source reuse rights; add a license before advertising this
+  as a licensed open-source project.

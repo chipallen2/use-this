@@ -5,3 +5,8 @@ node_modules/
 .vercel
 !cli-latest
 test-results/
+
+# Local credentials
+.env
+.env.*
+!.env.example

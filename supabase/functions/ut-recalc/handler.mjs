@@ -33,7 +33,7 @@ const msgOf = (e) => (e && e.message ? e.message : String(e));
 // - dispatch: async ({ claim }) -> { ok, status, body } (GitHub workflow dispatch w/ claim input)
 // - now: () -> epoch ms (injectable clock for tests)
 // - completeToken: shared secret gating complete/fail callbacks
-export function createHandler({ db, dispatch, now = () => Date.now(), completeToken = "" }) {
+export function createHandler({ db, dispatch, now = () => Date.now(), completeToken = "", manualOnly = false }) {
   const t = () => now();
 
   async function releaseQuietly(claim) {
@@ -47,6 +47,7 @@ export function createHandler({ db, dispatch, now = () => Date.now(), completeTo
   // Trigger path: human button, imperative/declarative WebMCP, pg_cron tick,
   // scheduled workflow claim step - all identical.
   async function trigger() {
+    if (manualOnly) return err(403, "manual-only", "Recalculation is available to the maintainer through GitHub Actions only");
     const at = t();
     let s;
     try {

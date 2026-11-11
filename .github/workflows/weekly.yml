@@ -1,47 +1,43 @@
 name: weekly-recompute
 
+# No push, PR, schedule, or repository_dispatch triggers.
 on:
-  schedule:
-    # Mondays 12:00 UTC = 5am PDT / 4am PST. Same guard as the pg_cron
-    # 12:05 UTC tick and anonymous recalc triggers: whoever claims the
-    # edge-fn lease first runs, the rest cleanly no-op. No duplicate dispatch.
-    - cron: "0 12 * * 1"
   workflow_dispatch:
     inputs:
-      ut_claim:
-        description: "Lease claim token (set by the ut-recalc edge fn dispatch; empty for manual runs)"
-        required: false
+      confirm:
+        description: "Type RUN to recompute and deploy production (may incur costs)"
+        required: true
         default: ""
+
 
 permissions:
   contents: write
 
-# One recompute at a time; a second tick waits instead of double-scraping.
+# One owner-requested recompute at a time.
 concurrency:
   group: weekly-recompute
   cancel-in-progress: false
 
 jobs:
   recompute:
+    # Reject legacy edge-function dispatches before allocating a runner.
+    if: github.repository == 'chipallen2/use-this' && github.actor == 'chipallen2' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.confirm == 'RUN'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Owner-scoped token is required for generated-data pushes to protected main.
+          # Store as a repository secret; never place credentials in source files.
+          token: ${{ secrets.UT_REPO_WRITE_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
       - name: Claim recalc lease (pure logic in scripts/ci/ut-claim.mjs)
-        # Edge-fn dispatches arrive with inputs.ut_claim already holding the
-        # lease - the dispatched, input-bearing run adopts it and alone
-        # computes. Schedule/manual runs POST to the same edge fn; that POST
-        # triggers the edge dispatch of the input-bearing job, so the wrapper
-        # run ALWAYS skips its own remaining compute (UT_SKIP=1 exact - the
-        # comparisons below test `!= '1'`, any decorated value would no-op
-        # the guard and double-compute). All decision logic lives in the
-        # tested ut-claim.mjs, not inline bash.
+        # Claim directly with a server-side credential: never dispatch a second job.
         env:
-          RECALC_URL: ${{ secrets.RECALC_URL }}
-          UT_CLAIM_INPUT: ${{ inputs.ut_claim }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.UT_SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
           node scripts/ci/ut-claim.mjs

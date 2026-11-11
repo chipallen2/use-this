@@ -35,7 +35,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { createHandler, GUARD_MS, LEASE_TTL_MS, FUTURE_SKEW_MS } from "../supabase/functions/ut-recalc/handler.mjs";
-import { decideClaim, parseClaimResponse, SKIP_EXACT } from "../scripts/ci/ut-claim.mjs";
+import { decideClaim, parseClaimResponse, SKIP_EXACT, main as claimMain } from "../scripts/ci/ut-claim.mjs";
 import { verifyOnce, verifyWithRetries, normalizeUtc, looksLikePlaceholder } from "../scripts/ci/ut-verify.mjs";
 import { missingPaths, DEPLOY_PATHS } from "../scripts/ci/ut-stage.mjs";
 
@@ -383,28 +383,23 @@ test("malformed bodies (null/array/string/empty) behave as trigger", async () =>
   }
 });
 
-// ---- ut-claim.mjs: workflow schedule/manual/dispatched paths ----
-test("workflow claim: dispatched input adopted verbatim", () => {
-  const d = decideClaim({ hasClaimInput: true, claimInput: "c_123_abc" });
-  assert.equal(d.skip, false);
-  assert.equal(d.claim, "c_123_abc");
-});
-
-test("workflow claim: fresh schedule run skips with exact '1'", () => {
+// ---- ut-claim.mjs: manual workflow lease paths ----
+test("workflow claim: fresh manual run skips with exact '1'", () => {
   assert.equal(SKIP_EXACT, "1");
   const d = decideClaim({ hasClaimInput: false, response: { status: "fresh" } });
   assert.equal(d.skip, true);
   assert.equal(d.status, "fresh");
 });
 
-test("workflow claim: in-progress schedule run skips", () => {
+test("workflow claim: in-progress manual run skips", () => {
   const d = decideClaim({ hasClaimInput: false, response: { status: "in-progress" } });
   assert.equal(d.skip, true);
 });
 
-test("workflow claim: no-claim stale run ALWAYS skips own compute (edge-dispatched job computes)", () => {
+test("workflow claim: manual stale run computes with its directly acquired lease", () => {
   const d = decideClaim({ hasClaimInput: false, response: { status: "started", claim: "c_x" } });
-  assert.equal(d.skip, true);
+  assert.equal(d.skip, false);
+  assert.equal(d.claim, "c_x");
   assert.equal(d.status, "started");
 });
 
@@ -973,4 +968,46 @@ test("frontend: polling reloads on genuinely newer live stamp, never on stale/fa
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(reloaded, 0, "fetch failure never reloads");
   assert.ok(timers.length >= 1, "failed poll schedules a retry");
+});
+
+
+test("manual-only edge handler rejects anonymous and cron triggers before any side effect", async () => {
+  const h = createHandler({ manualOnly: true,
+    db: { rpc() { throw new Error("must not access DB"); } },
+    dispatch() { throw new Error("must not dispatch"); },
+  });
+  for (const body of [{}, { confirm: "RUN" }, { ut_claim: "forged" }]) {
+    const response = await h.route(body);
+    assert.equal(response.http, 403);
+    assert.equal(response.json.code, "manual-only");
+  }
+});
+test("manual-only mode retains authentication on completion callbacks", async () => {
+  const h = createHandler({ manualOnly: true, completeToken: "secret", db: {} });
+  assert.equal((await h.route({ complete: true, token: "wrong" })).http, 403);
+  assert.equal((await h.route({ fail: true, token: "wrong" })).http, 403);
+});
+
+
+test("manual workflow claims once via authenticated RPC and exports only a validated lease", async () => {
+  const writes = [], requests = [];
+  const env = { GITHUB_ENV: "test-env", SUPABASE_URL: "https://example.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "test-secret" };
+  await claimMain({ env, write: (...args) => writes.push(args), fetchFn: async (url, options) => {
+    requests.push({ url: String(url), options });
+    return { ok: true, text: async () => JSON.stringify({ status: "started", claim: "c_test-claim" }) };
+  } });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://example.supabase.co/rest/v1/rpc/ut_claim_recalc");
+  assert.equal(requests[0].options.headers.Authorization, "Bearer test-secret");
+  assert.ok(JSON.parse(requests[0].options.body).p_claim.startsWith("c_"));
+  assert.deepEqual(writes, [["test-env", "UT_CLAIM=c_test-claim\n"]]);
+  assert.throws(() => decideClaim({ response: { status: "started", claim: "c_x\nUT_SKIP=0" } }), /lease claim failed/);
+});
+test("manual workflow skips fresh leases and fails closed on RPC errors", async () => {
+  const env = { GITHUB_ENV: "test-env", SUPABASE_URL: "https://example.supabase.co", SUPABASE_SERVICE_ROLE_KEY: "test-secret" };
+  const writes = [];
+  await claimMain({ env, write: (...args) => writes.push(args), fetchFn: async () => ({ ok: true, text: async () => '{"status":"fresh"}' }) });
+  assert.deepEqual(writes, [["test-env", "UT_SKIP=1\n"]]);
+  await assert.rejects(claimMain({ env, fetchFn: async () => ({ ok: false, status: 403 }), write: () => assert.fail("must not export a lease") }), /HTTP 403/);
+  await assert.rejects(claimMain({ env: { GITHUB_ENV: "test-env" }, fetchFn: () => assert.fail("must not send without secrets") }), /secrets are missing/);
 });

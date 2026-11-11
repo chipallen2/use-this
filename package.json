@@ -1,7 +1,7 @@
 {
   "name": "use-this",
   "version": "1.0.0",
-  "description": "USE THIS - today's best model for chatting, coding, and crazy-hard coding. Static index.html rendered weekly by GitHub Actions.",
+  "description": "USE THIS - today's best model for chatting, coding, and crazy-hard coding. Static index.html rendered by an owner-triggered GitHub Actions workflow.",
   "type": "module",
   "scripts": {
     "scrape": "node scripts/scrape.mjs data",

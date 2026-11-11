@@ -1,16 +1,12 @@
 // supabase/functions/ut-recalc/index.ts
 // Deno Edge Function: thin HTTP+CORS adapter over handler.mjs (pure logic).
-// Same handler for: human button, imperative WebMCP recalculate_picks,
-// declarative form tool, pg_cron weekly tick, scheduled-workflow claim.
-// Requires env: GITHUB_TOKEN (repo scope on chipallen2/use-this),
-// SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, UT_COMPLETE_TOKEN.
+// Public requests cannot dispatch workflows. Only authenticated completion/failure
+// callbacks can mutate state. Requires SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+// and UT_COMPLETE_TOKEN. Remove the old GITHUB_TOKEN secret after deployment.
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.106.0";
 import { createHandler } from "./handler.mjs";
-
-const GITHUB_OWNER = "chipallen2";
-const GITHUB_REPO = "use-this";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -54,29 +50,9 @@ serve(async (req: Request) => {
       return data as Record<string, unknown>;
     },
   };
-  // GitHub dispatch carries the lease claim as a workflow input, so the
-  // scheduled workflow can echo it back in complete/fail callbacks -
-  // ownership proof that a stale worker can never forge.
-  const dispatch = async ({ claim }: { claim: string }) => {
-    const r = await fetch(
-      `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/actions/workflows/weekly.yml/dispatches`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${Deno.env.get("GITHUB_TOKEN") ?? ""}`,
-          "X-GitHub-Api-Version": "2022-11-28",
-        },
-        body: JSON.stringify({ ref: "main", inputs: { ut_claim: claim } }),
-      },
-    );
-    const text = await r.text().catch(() => "");
-    return { ok: r.ok, status: r.status, body: text };
-  };
-
   const h = createHandler({
+    manualOnly: true,
     db,
-    dispatch,
     completeToken: Deno.env.get("UT_COMPLETE_TOKEN") ?? "",
   });
   const out = await h.route(body);
