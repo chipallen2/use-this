@@ -1,6 +1,7 @@
 {
   "name": "use-this",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "USE THIS - today's best model for chatting, coding, and crazy-hard coding. Static index.html rendered weekly by GitHub Actions.",
   "type": "module",
   "scripts": {
