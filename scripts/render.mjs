@@ -1,769 +1,268 @@
-// scripts/render.mjs -- builds dist/index.html from data/picks.json + data/candidates.json
-// Locked design: v4.html landing + popup.html detail. Inline CSS, inline SVG, tiny inline JS (modal only).
+// scripts/render.mjs - builds the static site into dist/:
+//   index.html  - app shell (landing form OR picks, decided in the browser)
+//   docs/index.html - settings reference (served at /docs)
+//   app.mjs, calc.mjs - browser code; calc.mjs is lib/calc.mjs byte-for-byte
+//   models.json - the daily data (copied from data/models.json)
+//   llms.txt    - machine-readable pointer to the bot endpoint
+// No picks are baked in: every pick is computed from URL settings.
 // Usage: node scripts/render.mjs [datadir] [outpath]
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, readdirSync } from "fs";
-import { dirname } from "path";
-import { displayName, effortLabel } from "./display-name.mjs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from "fs";
+import { dirname, join } from "path";
+import * as C from "../lib/calc.mjs";
+import { validateModelsData, NORMALIZATION } from "./models-data.mjs";
 
 const DATA = process.argv[2] || "data";
 const OUT = process.argv[3] || "dist/index.html";
+const DIST = dirname(OUT);
 
-// Canonical public recalc endpoint. This default is the REAL production URL so
-// a missing RECALC_URL env can NEVER bake a broken placeholder into a deploy.
-// A deploy carrying a placeholder endpoint is refused outright (see the
-// PLACEHOLDER_GUARD check before the dist writes below).
-// Test/dev overrides still work via RECALC_URL env, but any override that
-// looks like a placeholder is rejected the same way.
-const CANONICAL_RECALC_URL = "https://cmohqhotfywhmgikeatc.supabase.co/functions/v1/ut-recalc";
-const PLACEHOLDER_RE = /PLACEHOLDER/i;
-const RECALC_URL = process.env.RECALC_URL || CANONICAL_RECALC_URL;
-if (PLACEHOLDER_RE.test(RECALC_URL)) {
-  console.error("RENDER REFUSED: RECALC_URL looks like a placeholder (" + RECALC_URL + ") - refusing to bake a broken endpoint. Set RECALC_URL to the real edge-fn URL or unset it for the canonical default.");
-  process.exit(1);
-}
+const data = JSON.parse(readFileSync(`${DATA}/models.json`, "utf8"));
+validateModelsData(data); // never deploy a file the client can't trust
+const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const recQuery = C.serializeSettings(C.RECOMMENDED);
+const recUrl = `${C.SITE_URL}/?${recQuery}`;
+const apiExample = `${C.SITE_URL}${C.API_PATH}?${recQuery}`;
 
-const picks = JSON.parse(readFileSync(`${DATA}/picks.json`, "utf8"));
-const cands = JSON.parse(readFileSync(`${DATA}/candidates.json`, "utf8"));
-
-const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-// Benchmark source links (footer + popup explain text). Applied AFTER esc().
-const AA_URL = "https://artificialanalysis.ai/leaderboards/models";
-const AA_CODING_URL = "https://artificialanalysis.ai/agents/coding-agents";
-const DESIGN_URL = "https://www.designarena.ai/leaderboard?section=agentic-web-dev";
-const blink = (url, text) => `<a href="${url}" target="_blank" rel="noopener">${text}</a>`;
-function linkify(s) {
-  return String(s)
-    .replace(/AA Coding Agent Index/g, blink(AA_CODING_URL, "AA Coding Agent Index"))
-    .replace(/AA Intelligence Index/g, blink(AA_URL, "AA Intelligence Index"))
-    .replace(/Artificial Analysis/g, blink(AA_URL, "Artificial Analysis"))
-    .replace(/Design Arena/g, blink(DESIGN_URL, "Design Arena"));
-}
-
-// Short display name lives in ./display-name.mjs (shared with tests) - see imports above.
-
-// (shortSource kept for why-text fallbacks; Signal column removed in favor of per-signal columns.)
-function shortSource(s) {
-  if (!s) return "";
-  if (s.startsWith("35% AA Coding")) return "blend";
-  if (s.startsWith("Design Arena only")) return "Design only";
-  if (s.startsWith("AA Coding only")) return "AA Coding only";
-  return s;
-}
-
-function cardClass(key) { return key === "agent" ? "chat" : key === "everyday" ? "everyday" : "hard"; }
-function cardTitle(key) { return key === "agent" ? "Chatting" : key === "everyday" ? "Everyday Coding" : "Crazy Hard Coding"; }
-function cardExpl(key) {
-  return key === "agent" ? "Best for everyday chats"
-    : key === "everyday" ? "Best for normal coding"
-    : "Best money-no-object pick for really hard tasks";
-}
-
-// Org colors (AA-style legend)
-function orgOf(id) {
-  if (id.startsWith("unmatched:")) return "New model";
-  const o = id.split("/")[0].toLowerCase();
-  if (o === "openai") return "OpenAI";
-  if (o === "anthropic") return "Anthropic";
-  if (o === "google") return "Google";
-  if (o === "meta") return "Meta";
-  if (o === "x-ai") return "xAI";
-  if (o === "z-ai") return "Z.ai";
-  if (o === "moonshotai") return "Moonshot AI";
-  if (o === "deepseek") return "DeepSeek";
-  if (o === "alibaba" || o === "qwen") return "Alibaba";
-  if (o === "reflection") return "Reflection";
-  return o;
-}
-const ORG_COLORS = {
-  "OpenAI": "#111111", "Anthropic": "#e8590c", "Google": "#2f9e44",
-  "Meta": "#1971c2", "xAI": "#7048e8", "Z.ai": "#0c8599",
-  "Moonshot AI": "#f08c00", "DeepSeek": "#0b7285", "Alibaba": "#d6336c",
-};
-const orgColor = (id) => ORG_COLORS[orgOf(id)] || "#868e96";
-
-// Nice round ticks within [lo, hi]
-function niceTicks(lo, hi, n) {
-  if (!(hi > lo)) return [lo];
-  const span = hi - lo, raw = span / n;
-  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
-  const norm = raw / mag;
-  const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
-  const out = [];
-  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(4));
-  return out.length ? out : [lo, hi];
-}
-// Log-friendly $ ticks within [lo, hi]
-function moneyTicks(lo, hi) {
-  const cand = [0.25, 0.5, 1, 2, 5, 10, 15, 20, 30, 50];
-  const t = cand.filter((v) => v >= lo * 0.999 && v <= hi * 1.001);
-  if (t.length >= 2) return t;
-  return niceTicks(lo, hi, 5);
-}
-
-// Inline SVG scatter (AA style): x = cost/task, CHEAP on LEFT; y = score.
-// Light grid, $ and % ticks, dots colored by org, all dots labeled + native
-// <title> tooltips, dashed CUTOFF line with shaded winning zone above it,
-// FRONTIER tag on the top scorer, USE THIS ring + callout on the winner.
-function scatter(list, winner, cutoff, color, benchLabel, thresholdPct) {
-  const pts = list.filter((p) => Number.isFinite(p.costPerTask)).sort((a, b) => a.costPerTask - b.costPerTask);
-  const W = 760, H = 480, L = 56, R = 740, T = 26, B = 392;
-  const scores = pts.map((p) => p.score);
-  const costs = pts.map((p) => p.costPerTask);
-  const key = (p) => p.openRouterId + "|" + p.effort;
-  // Tooltip signal detail for coding pools (entries carry aaRaw/designElo).
-  const signalTip = (p) => {
-    if (p.aaRaw == null && p.designElo == null) return "";
-    const bits = [];
-    if (p.aaRaw != null) bits.push(`AA Coding ${p.aaRaw}`);
-    if (p.designElo != null) bits.push(`Design Elo ${p.designElo}`);
-    return " (" + bits.join(", ") + ")";
-  };
-  const frontier = pts.reduce((a, b) => (b.score > a.score || (b.score === a.score && b.costPerTask < a.costPerTask) ? b : a));
-  const yHi = Math.max(...scores);
-  const yPadTop = Math.max(0.5, (yHi - cutoff) * 0.35);
-  const yMax = yHi + yPadTop;
-  const yMinZoom = cutoff - Math.max(0.5, (yHi - cutoff) * 0.3);
-  const yMinFull = 0; // expanded view always bottoms at exactly 0
-  const y = (s) => B - ((s - yMinZoom) / (yMax - yMinZoom)) * (B - T);
-  const yF = (s) => B - ((s - yMinFull) / (yMax - yMinFull)) * (B - T);
-  const cLo = Math.min(...costs), cHi = Math.max(...costs);
-  const logMin = Math.log10(Math.max(0.05, cLo * 0.85)), logMax = Math.log10(cHi * 1.12);
-  const x = (c) => L + ((Math.log10(Math.max(0.05, c)) - logMin) / Math.max(0.01, logMax - logMin)) * (R - L);
-  const yCut = y(cutoff);
-  const short = (p) => {
-    const [n1, n2] = displayName(p.openRouterId);
-    return (n1 + (n2 ? " " + n2 : "") + (p.effort ? " " + p.effort : "")).slice(0, 26);
-  };
-  // Gridlines + ticks
-  let grid = "";
-  // winning zone: above cutoff (height recomputed by the range toggle)
-  grid += `<rect x="${L}" y="${T}" width="${R - L}" height="${Math.max(0, Math.round(yCut) - T)}" fill="#e9fbe8" data-zone="1"/>`;
-  const yGridZoom = niceTicks(yMinZoom, yMax, 6).map((t) => {
-    const yy = Math.round(y(t));
-    return `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>` +
-      `<text x="${L - 7}" y="${yy + 4}" font-size="11" fill="#495057" text-anchor="end">${t}%</text>`;
-  }).join("");
-  const yGridFull = niceTicks(yMinFull, yMax, 10).map((t) => {
-    const yy = Math.round(yF(t));
-    return `<line x1="${L}" y1="${yy}" x2="${R}" y2="${yy}" stroke="#dee2e6" stroke-width="1"/>` +
-      `<text x="${L - 7}" y="${yy + 4}" font-size="11" fill="#495057" text-anchor="end">${t}%</text>`;
-  }).join("");
-  grid = `<g class="ygrid-zoom">${yGridZoom}</g><g class="ygrid-full" style="display:none">${yGridFull}</g>`;
-  for (const t of moneyTicks(cLo, cHi)) {
-    const xx = Math.round(x(t));
-    grid += `<line x1="${xx}" y1="${T}" x2="${xx}" y2="${B}" stroke="#e9ecef" stroke-width="1"/>`;
-    grid += `<text x="${xx}" y="${B + 20}" font-size="11" fill="#495057" text-anchor="middle">$${t}</text>`;
-  }
-  // Cutoff line
-  const cut = `<line x1="${L}" y1="${Math.round(yCut)}" x2="${R}" y2="${Math.round(yCut)}" stroke="#e03131" stroke-width="2" stroke-dasharray="8 6" data-y="${cutoff}"/>` +
-    `<text x="${R - 4}" y="${Math.round(yCut) - 7}" font-size="12" font-weight="900" fill="#e03131" text-anchor="end" data-y="${cutoff}" data-dy="-7">CUTOFF ${cutoff}% (${thresholdPct}% of frontier)</text>`;
-  // Dots + labels with simple collision stagger.
-  // Below-cutoff dots render dimmed (smaller, translucent gray) but stay
-  // tappable with full tooltips. Only above-cutoff dots get text labels,
-  // to avoid clutter.
-  let dots = "", labels = "";
-  const placed = [];
-  const keyWin = key(winner), keyFront = key(frontier);
-  const above = (p) => p.score >= cutoff;
-  const ordered = [...pts].sort((a, b) => x(a.costPerTask) - x(b.costPerTask));
-  for (const p of ordered) {
-    const isWin = key(p) === keyWin;
-    const isAbove = above(p);
-    const cx = Math.round(x(p.costPerTask)), cy = Math.round(y(p.score));
-    const c = isAbove ? orgColor(p.openRouterId) : "#adb5bd";
-    const tip = short(p) + " - " + orgOf(p.openRouterId) + " - " + p.score + "% - $" + p.costPerTask + "/task" + (isAbove ? "" : " (below cutoff)") + (isWin ? " - USE THIS" : "") + signalTip(p);
-    const dat = `class="dot" data-name="${esc(short(p))}" data-org="${esc(orgOf(p.openRouterId))}" data-score="${p.score}" data-cost="${p.costPerTask}"` + (isWin ? ` data-win="1"` : "") + (isAbove ? "" : ` data-below="1"`);
-    if (isWin) {
-      dots += `<circle cx="${cx}" cy="${cy}" r="13" fill="${c}" stroke="#141414" stroke-width="4" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
-      // USE THIS badge: same pill-beside-dot language as FRONTIER, but dominant -
-      // card-accent fill, larger pill, star kept. Merged when winner == frontier.
-      const accent = color === "chat" ? ["#c5ff32", "#141414"] : color === "everyday" ? ["#ff795e", "#141414"] : ["#7926ec", "#fff"];
-      const winLabel = key(p) === keyFront ? "★ USE THIS \u00b7 FRONTIER " + frontier.score + "%" : "★ USE THIS";
-      const wbw = Math.round(winLabel.length * 8.2 + 26);
-      let wbx = cx + 20;
-      if (wbx + wbw > R) wbx = cx - 20 - wbw;
-      if (wbx < L) wbx = L;
-      labels += `<g><rect x="${wbx}" y="${cy - 13}" width="${wbw}" height="26" rx="13" fill="${accent[0]}" stroke="#141414" stroke-width="2" data-y="${p.score}" data-dy="-13" data-badge="1"/><text x="${wbx + wbw / 2}" y="${cy + 5}" font-size="13" font-weight="900" fill="${accent[1]}" text-anchor="middle" data-y="${p.score}" data-dy="5">${esc(winLabel)}</text></g>`;
-      labels += `<text x="${cx}" y="${cy + 32}" font-size="11" font-weight="900" fill="#141414" text-anchor="middle" data-y="${p.score}" data-dy="32">${esc(short(p))}</text>`;
-      placed.push({ x: cx, row: 1 }, { x: cx, row: -1 });
-    } else if (isAbove) {
-      dots += `<circle cx="${cx}" cy="${cy}" r="6.5" fill="${c}" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
-      // alternate above/below, flip if too close to last label on that row
-      let row = placed.length % 2 === 0 ? 1 : -1;
-      const tooClose = (r) => placed.some((q) => q.row === r && Math.abs(q.x - cx) < 62);
-      if (tooClose(row)) row = -row;
-      if (tooClose(row)) row = 0; // give up staggering, put further above
-      const ly = row === 1 ? cy - 14 : row === -1 ? cy + 24 : cy - 26;
-      const ldy = +((ly - y(p.score)).toFixed(2));
-      labels += `<text x="${cx}" y="${ly}" font-size="10" font-weight="700" fill="#343a40" text-anchor="middle" data-y="${p.score}" data-dy="${ldy}">${esc(short(p))}</text>`;
-      placed.push({ x: cx, row });
-    } else {
-      // Below cutoff: dimmed, unlabeled, still tappable with full tooltip.
-      dots += `<circle cx="${cx}" cy="${cy}" r="4" fill="${c}" opacity="0.45" data-y="${p.score}" ${dat}><title>${esc(tip)}</title></circle>`;
-    }
-  }
-  const fx = Math.round(x(frontier.costPerTask)), fy = Math.round(y(frontier.score));
-  // FRONTIER badge: small dark pill directly beside the frontier dot, no leader line.
-  // (When frontier == winner the label merges into the USE THIS pill beside the dot.)
-  let frontTag = "";
-  if (keyFront !== keyWin) {
-    const fLabel = `FRONTIER ${frontier.score}%`;
-    const bw = Math.round(fLabel.length * 7.4 + 22);
-    let bx = fx + 14;
-    if (bx + bw > R) bx = fx - 14 - bw;
-    if (bx < L) bx = L;
-    frontTag = `<g><rect x="${bx}" y="${fy - 11}" width="${bw}" height="22" rx="11" fill="#141414" data-y="${frontier.score}" data-dy="-11" data-badge="1"/><text x="${bx + bw / 2}" y="${fy + 4}" font-size="12" font-weight="900" fill="#fff" text-anchor="middle" data-y="${frontier.score}" data-dy="4">${esc(fLabel)}</text></g>`;
-  }
-  const orgs = [...new Set(pts.map((p) => orgOf(p.openRouterId)))];
-  const legend = '<div class="legend">' + orgs.map((o) => '<span><i style="background:' + (ORG_COLORS[o] || "#868e96") + '"></i>' + esc(o) + '</span>').join("") + '</div>';
-  return { legend, svg: `<svg viewBox="0 0 ${W} ${H + 40}" role="img" aria-label="Scatter chart of cost per task versus ${esc(benchLabel)} score" data-ymin-zoom="${+yMinZoom.toFixed(3)}" data-ymax="${+yMax.toFixed(3)}" data-cutoff="${cutoff}" data-t="${T}" data-b="${B}">
-<defs><clipPath id="clip-${color}"><rect x="${L}" y="${T}" width="${R - L}" height="${B - T}"/></clipPath></defs>
-${grid}
-<line x1="${L}" y1="${T}" x2="${L}" y2="${B}" stroke="#adb5bd" stroke-width="1"/>
-<line x1="${L}" y1="${B}" x2="${R}" y2="${B}" stroke="#adb5bd" stroke-width="1"/>
-${cut}
-<g clip-path="url(#clip-${color})">${dots}</g>
-${labels}
-${frontTag}
-<text x="${L}" y="${B + 38}" font-size="12" font-weight="700" fill="#495057">&#8592; Cheaper</text>
-<text x="${R}" y="${B + 38}" font-size="12" font-weight="700" fill="#495057" text-anchor="end">Pricier &#8594;</text>
-<text x="${(L + R) / 2}" y="${B + 38}" font-size="13" font-weight="900" fill="#141414" text-anchor="middle">Cost per task ($) (log scale)</text>
-<text x="14" y="210" font-size="12" font-weight="700" fill="#495057" transform="rotate(-90 14 210)" text-anchor="middle">${esc(benchLabel)} score (%)</text>
-</svg>` };
-}
-
-function modal(key, color, benchLabel, thresholdPct, whyText) {
-  const w = picks[key].winner;
-  const list = cands[key];
-  const cutoff = picks[key].cutoff;
-  const [l1, l2] = displayName(w.openRouterId);
-  const ch = scatter(list, w, cutoff, color, benchLabel, thresholdPct);
-  const isCoding = key !== "agent";
-  // Provenance for this card: agent cards are pure AA; coding cards show
-  // the winner's own blend (single-signal winners say so explicitly,
-  // e.g. "AA Coding only - no Design Arena data yet") so a Design-only or
-  // AA-only winner is never misread as a 50/50 blend.
-  const provenanceLine = isCoding && w.sources
-    ? `<p class="provenance">Winner basis: ${esc(w.sources)}.</p>`
-    : isCoding
-      ? `<p class="provenance">Winner basis: 35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE (renormalized when signals absent).</p>`
-      : `<p class="provenance">Winner basis: Artificial Analysis Intelligence Index.</p>`;
-  // Coding tables show the blend math transparently: Combined + per-signal raw/norm.
-  // AA norms min-max 0-100; Design shows raw frontend score; VALS norms min-max
-  // 0-100 per bench with raw accuracy on hover. Absent signal = "-" (excluded
-  // from the blend entirely - renormalized, never a zero penalty).
-  const fmtAA = (p) => p.aaScore == null ? "-" : (p.aaRaw != null ? `${p.aaRaw}*` : `${p.aaScore}%`);
-  const fmtDesign = (p) => p.designScore == null ? "-" : `Elo ${p.designElo}*`;
-  const fmtVals = (p, k) => {
-    const s = p[`${k}Score`], r = p[`${k}Raw`];
-    if (s == null) return { txt: "-", tip: "no data - excluded from blend" };
-    return { txt: `${s}%`, tip: `raw accuracy ${r}` };
-  };
-  const sortVal = (v) => v == null ? "" : String(v);
-  const rows = [...list].sort((a, b) => b.score - a.score || a.costPerTask - b.costPerTask).map((p) => {
-    const isWin = p.openRouterId === w.openRouterId && p.effort === w.effort;
-    const below = p.score < cutoff;
-    const [n1, n2] = displayName(p.openRouterId);
-    const nameCell = `<td>${esc(n1 + (n2 ? " " + n2 : ""))}${isWin ? " &#9733;" : ""}</td>`;
-    const thinkCell = `<td>${esc(p.effort || "default")}</td>`;
-    const priceCell = `<td data-v="${sortVal(p.costPerTask)}">${p.costPerTask == null ? "N/A" : `$${p.costPerTask}`}</td>`;
-    let scoreCells, headExtra;
-    if (isCoding) {
-      const vv = fmtVals(p, "valsVibe"), vc = fmtVals(p, "valsVcb"), vs = fmtVals(p, "valsSwe");
-      scoreCells = `<td data-v="${p.score}">${p.score}%</td><td data-v="${sortVal(p.aaScore)}">${esc(fmtAA(p))}</td><td data-v="${sortVal(p.designScore)}">${esc(fmtDesign(p))}</td>` +
-        `<td data-v="${sortVal(p.valsVibeScore)}" title="${esc(vv.tip)}">${esc(vv.txt)}</td>` +
-        `<td data-v="${sortVal(p.valsVcbScore)}" title="${esc(vc.tip)}">${esc(vc.txt)}</td>` +
-        `<td data-v="${sortVal(p.valsSweScore)}" title="${esc(vs.tip)}">${esc(vs.txt)}</td>`;
-      headExtra = "";
-    } else {
-      scoreCells = `<td data-v="${p.score}">${p.score}%</td>`;
-      headExtra = "";
-    }
-    void headExtra;
-    return `<tr${isWin ? ' class="win"' : below ? ' class="below"' : ""}>${nameCell}${thinkCell}${scoreCells}${priceCell}</tr>`;
-  }).join("");
-  const head = isCoding
-    ? `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Combined &#9660;</button></th><th><button type="button" data-col="3" data-type="num">AA Coding *</button></th><th><button type="button" data-col="4" data-type="num">Design *</button></th><th><button type="button" data-col="5" data-type="num">Vibe</button></th><th><button type="button" data-col="6" data-type="num">VCB</button></th><th><button type="button" data-col="7" data-type="num">SWE</button></th><th><button type="button" data-col="8" data-type="num">Price</button></th>`
-    : `<th><button type="button" data-col="0" data-type="str">Model</button></th><th>Thinking</th><th><button type="button" data-col="2" data-type="num" data-dir="desc">Score &#9660;</button></th><th><button type="button" data-col="3" data-type="num">Price</button></th>`;
-  return `<div class="modal" id="modal-${key}" aria-hidden="true"><div class="modal-card ${color}" role="dialog" aria-label="${cardTitle(key)} detail">
-<button class="close" data-close="${key}" aria-label="Close">&times;</button>
-<p class="kicker">${cardTitle(key)} - detail</p>
-<p class="winner"><span class="use">Use this</span><span class="name">${esc(l1 + (l2 ? " " + l2 : ""))}</span><span class="think">${esc(effortLabel(w.effort))}</span></p>
-<p class="why">${linkify(whyText)}</p>
-<div class="chart-box"><h2>Quality vs cost</h2><p class="sub">Left = cheaper. Up = better ${esc(benchLabel)} score. Hover or tap any dot for details.</p>
-<button class="yrange" type="button" data-mode="zoom">View All</button>
-${ch.legend}
-${ch.svg}
-<div class="tip" hidden></div>
-<p class="explain"><strong>Score = ${linkify(esc(benchLabel))},</strong> cutoff = ${thresholdPct}% of the best (frontier) score, here ${cutoff}%. Cheapest model above the cutoff wins.${key === "agent" ? "" : linkify(" Coding score = 35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE (AA + VALS min-max normalized to 0-100); missing signals are excluded and the blend is renormalized over present signals only.")}</p>
-<div class="table-scroll"><table class="sortable"><caption>All contenders (dimmed = below cutoff)</caption><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></div>
-${isCoding ? linkify('<p class="norm-note">* AA Coding shows raw index points; Design shows raw Elo. VIBE/VCB/SWE show normalized 0-100 scores with raw accuracy on hover. "-" = no data for that signal (excluded from the blend, never a penalty). Rows with no published task cost show N/A, are omitted from the price chart, and cannot win.</p>') : ""}
-<div class="id-row"><span class="tag">Copy-paste OpenRouter ID</span><code>${esc(w.openRouterId)}</code></div>
-${provenanceLine}
-</div></div></div>`;
-}
-
-const dateStr = new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
-// Calc instant: the persisted last SUCCESSFUL recompute completion, baked
-// from data/calc.json (written by CI only after scrape+render+commit
-// succeed; deployed as dist/data-calc.json). The field is UTC; the page
-// localizes the SAME instant to date+time together so timezone rollover
-// agrees. No file mtimes, no render-time stamps - never fake freshness.
-// Legacy: calc.json absent (pre-migration) -> NO guessed instant. The page
-// shows only the data date and labels provenance unknown, with no time
-// element at all (inventing 16:00 UTC would fabricate a calc claim).
-let calcUtc, calcIsEstimate;
-try {
-  const calc = JSON.parse(readFileSync(`${DATA}/calc.json`, "utf8"));
-  const ms = Date.parse(calc.calc_utc);
-  if (Number.isNaN(ms)) throw new Error("bad calc_utc");
-  calcUtc = new Date(ms).toISOString();
-  calcIsEstimate = false;
-} catch {
-  calcUtc = null;
-  calcIsEstimate = true;
-}
-// Localize date AND time from the same instant in PT (site timezone), so
-// a UTC rollover never shows a date from one day with a time from another.
-const calcDate = calcUtc ? new Date(calcUtc) : new Date(picks.date + "T12:00:00-07:00");
-// datetime attr is the FULL UTC instant (datetime="...") when known, so
-// the machine-readable value and the displayed PT date+time describe the
-// same instant. When unknown there is NO datetime guess - the <time> holds
-// only the data date with no timestamp attr at all.
-// datetime attr uses the PT-local calendar date (matches the displayed PT
-// date string), not the UTC slice - a late-PT-night calc must not claim
-// the next UTC day in machine-readable metadata.
-const calcDatePT = calcIsEstimate
-  ? picks.date
-  : new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit" }).format(calcDate);
-const calcDateStr = calcIsEstimate
-  ? new Date(picks.date + "T12:00:00-07:00").toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" })
-  : calcDate.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", month: "long", day: "numeric", year: "numeric" });
-// Unknown provenance: no invented time, no timestamp attr - display says so.
-const calcTimeStr = calcIsEstimate ? "time unknown" : calcDate.toLocaleTimeString("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", minute: "2-digit", timeZoneName: "short" }).replace(/([AP]M)/, (m) => m.toLowerCase()).replace(/ (?=[ap]m)/i, "");
-
-function card(key, color) {
-  const w = picks[key].winner;
-  const [l1, l2] = displayName(w.openRouterId);
-  const quality = w.relative;
-  const full = `${l1}${l2 ? " " + l2 : ""}`;
-  // WebMCP machine-readable pick: agents consume data-* instead of scraping pixels.
-  return `<article class="${color}" data-open="${key}" tabindex="0" role="button" aria-label="${cardTitle(key)} detail"
- data-webmcp-pick="${key}" data-category="${cardTitle(key)}" data-model="${esc(full)}" data-thinking="${esc(w.effort || "default")}" data-price="${w.costPerTask}" data-quality="${quality}" data-openrouter-id="${esc(w.openRouterId)}">
-<h2>${cardTitle(key)}</h2>
-<p class="explanation">${cardExpl(key)}</p>
-<h3><span class="thinking">${esc(effortLabel(w.effort))}</span><span>${esc(l1)}</span>${l2 ? `<span>${esc(l2)}</span>` : ""}</h3>
-<p class="details"><span>Price <strong>$${w.costPerTask}</strong></span><span>Quality <strong>${quality}%</strong></span></p>
-<p class="tap">Tap for detail &#8594;</p>
-</article>`;
-}
-
-const why = {
-  agent: `Cheapest chat model clearing 90% of frontier quality at $${picks.agent.winner.costPerTask}/task.`,
-  everyday: `Cheapest model clearing 90% of frontier blended coding quality at $${picks.everyday.winner.costPerTask}/task. Score = ${esc(picks.everyday.winner.sources || "35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE")}.`,
-  hard: `Cheapest model clearing 97% of frontier blended coding quality at $${picks.hard.winner.costPerTask}/task. Score = ${esc(picks.hard.winner.sources || "35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE")}. Frontier quality without the frontier bill.`,
-};
-
-// WebMCP structured data response: first application/ld+json block on the
-// page is the declarative form tool's response payload (per WebMCP draft:
-// navigating form tools return the target page's first ld+json block).
-const pickLD = (key, title) => {
-  const w = picks[key].winner;
-  const [l1, l2] = displayName(w.openRouterId);
-  return {
-    "@type": "ListItem",
-    position: key === "agent" ? 1 : key === "everyday" ? 2 : 3,
-    name: `${title}: ${l1}${l2 ? " " + l2 : ""}`,
-    item: {
-      "@type": "SoftwareApplication",
-      applicationCategory: title,
-      name: `${l1}${l2 ? " " + l2 : ""}`,
-      additionalProperty: [
-        { "@type": "PropertyValue", name: "thinking", value: w.effort || "default" },
-        { "@type": "PropertyValue", name: "pricePerTaskUSD", value: w.costPerTask },
-        { "@type": "PropertyValue", name: "qualityPct", value: w.relative },
-        { "@type": "PropertyValue", name: "openRouterId", value: w.openRouterId },
-      ],
-    },
-  };
-};
-const ld = {
-  "@context": "https://schema.org",
-  "@type": "ItemList",
-  name: calcIsEstimate ? `USE THIS MODEL picks for ${calcDatePT} (calc time unknown - data predates calc provenance)` : `USE THIS MODEL picks for ${calcDatePT} (calc ${calcUtc})`,
-  itemListElement: [pickLD("agent", "Chatting"), pickLD("everyday", "Everyday Coding"), pickLD("hard", "Crazy Hard Coding")],
-};
-const ldJson = JSON.stringify(ld).replace(/</g, "\\u003c");
-
-const htmlTemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
+const HEAD = (title, desc) => `<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#2345ff">
-<meta name="description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
+<meta name="description" content="${esc(desc)}">
 <link rel="describedby" href="/llms.txt">
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <link rel="icon" href="/favicon.ico" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
-<link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<meta property="og:title" content="Use This Model - Today's Best Model">
-<meta property="og:description" content="Today's best AI model for chatting, coding, and hard coding - recomputed from live benchmarks.">
-<meta property="og:image" content="https://usethismodel.vercel.app/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="1200">
-<meta property="og:url" content="https://usethismodel.vercel.app/">
+<meta property="og:title" content="${esc(title)}">
+<meta property="og:description" content="${esc(desc)}">
+<meta property="og:image" content="${C.SITE_URL}/og-image.png">
 <meta property="og:type" content="website">
 <meta name="twitter:card" content="summary_large_image">
-<script type="application/ld+json">{LDJSON}</script>
-<title>Use This Model - Today's Best Model</title>
-<style>
-*{box-sizing:border-box}
-html{min-height:100%}
+<title>${esc(title)}</title>`;
+
+const CSS = `*{box-sizing:border-box}
 body{margin:0;min-height:100svh;padding:clamp(20px,3vw,52px);display:flex;flex-direction:column;background:#2345ff;color:#fff;font-family:Arial,Helvetica,sans-serif;-webkit-font-smoothing:antialiased}
-header{margin-bottom:clamp(28px,4vh,48px)}
-h1{margin:0;font-size:clamp(26px,7vw,112px);white-space:nowrap;font-weight:900;line-height:.96;letter-spacing:-.065em}
-header p{margin:18px 0 0;font-size:clamp(18px,1.7vw,26px);line-height:1.35}
-.pick-date{display:flex;align-items:baseline;flex-wrap:wrap;gap:6px 12px;margin-top:22px;font-size:clamp(16px,1.4vw,22px);font-weight:700}
-.pick-date .calc-stamp{display:inline-flex;align-items:baseline;gap:6px;white-space:nowrap}
-.pick-date .calc-time{font-weight:400;opacity:.65;font-size:.8em;white-space:nowrap}
-.recalculate{margin-left:auto;padding:10px 18px;border:2px solid currentColor;border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:14px;cursor:pointer}
-.recalculate:disabled{opacity:.55;cursor:default}
-.recalc-status{flex-basis:100%;font-weight:400;font-size:.8em;opacity:.85}
-@media(max-width:640px){.recalculate{margin-left:0}}
-main{flex:1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(14px,1.5vw,24px)}
-article{min-height:460px;padding:clamp(24px,2.6vw,44px);border-radius:24px;display:flex;flex-direction:column;color:#141414;cursor:pointer}
-.chat{background:#c5ff32}.everyday{background:#ff795e}.hard{background:#7926ec;color:#fff}
-h2{margin:0;max-width:10em;font-size:clamp(29px,3vw,48px);font-weight:800;line-height:1.03;letter-spacing:-.045em}
-.explanation{margin:14px 0 0;font-size:clamp(15px,1.2vw,20px);line-height:1.4;max-width:28em;text-wrap:pretty}
-h3{margin:auto 0 0;padding-top:65px;font-size:clamp(42px,5vw,84px);font-weight:900;line-height:.97;letter-spacing:-.055em;position:relative}
-h3 span{display:block}
-h3 .thinking{position:absolute;top:12px;left:0;display:inline-flex;align-items:center;padding:7px 12px;border:2px solid currentColor;border-radius:999px;font-size:clamp(12px,1.1vw,16px);font-weight:900;line-height:1;letter-spacing:.045em;white-space:nowrap;text-transform:uppercase}
-.details{display:flex;flex-wrap:wrap;gap:8px 22px;margin:28px 0 0;font-size:15px;line-height:1.5}
+a{color:inherit}
+header{display:flex;flex-wrap:wrap;align-items:flex-start;gap:16px;margin-bottom:clamp(24px,4vh,44px)}
+header .brand{flex:1;min-width:260px}
+h1{margin:0;font-size:clamp(26px,7vw,104px);white-space:nowrap;font-weight:900;line-height:.96;letter-spacing:-.065em}
+h1 a{text-decoration:none}
+.sub{margin:14px 0 0;font-size:clamp(15px,1.4vw,20px);opacity:.85}
+.actions{display:flex;flex-wrap:wrap;gap:10px}
+.actions button,.pill{padding:10px 18px;border:2px solid currentColor;border-radius:999px;background:transparent;color:inherit;font:inherit;font-size:15px;font-weight:700;cursor:pointer}
+body[data-state=landing] .needs-picks,body[data-state=invalid] .needs-picks{display:none}
+main{flex:1}
+.cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(14px,1.5vw,24px)}
+.card{min-height:440px;padding:clamp(24px,2.6vw,44px);border-radius:24px;display:flex;flex-direction:column;color:#141414;cursor:pointer}
+.chat{background:#c5ff32;color:#141414}.everyday{background:#ff795e;color:#141414}.hard{background:#7926ec;color:#fff}
+.card h2{margin:0;font-size:clamp(29px,3vw,48px);font-weight:800;line-height:1.03;letter-spacing:-.045em}
+.explanation{margin:14px 0 0;font-size:clamp(15px,1.2vw,20px);line-height:1.4}
+.card h3{margin:auto 0 0;padding-top:60px;font-size:clamp(36px,4.4vw,76px);font-weight:900;line-height:.97;letter-spacing:-.055em;position:relative}
+.card h3 span{display:block}.card h3 .org{font-size:.42em;letter-spacing:-.01em;margin-bottom:.2em}
+.card h3 .thinking{position:absolute;top:10px;left:0;padding:7px 12px;border:2px solid currentColor;border-radius:999px;font-size:14px;letter-spacing:.05em;text-transform:uppercase}
+.details{display:flex;flex-wrap:wrap;gap:8px 22px;margin:24px 0 0;font-size:15px;line-height:1.5}
 .tap{margin:14px 0 0;font-size:13px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;opacity:.85}
-.hard .tap{opacity:1}
-footer{padding-top:20px;text-align:center;font-size:12px;line-height:1.4}
-footer a,.explain a,.why a,.norm-note a{color:inherit}
+.landing{max-width:1200px}
+.lede{font-size:clamp(18px,1.8vw,26px);line-height:1.4;max-width:44em;margin:0 0 12px}.lede.small{font-size:16px;opacity:.9}
+.cats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:22px}
+fieldset.cat{border:0;border-radius:20px;padding:18px 20px;margin:0}
+fieldset.cat legend{font-weight:900;font-size:22px;padding:0;float:left;width:100%;margin-bottom:8px}
+.hint{margin:0 0 4px;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em}
+label.bench{display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0}
+label.bench span{flex:1}label.bench .w{width:58px}
+.nums{display:grid;gap:8px;margin-top:12px}.nums label{display:flex;flex-direction:column;font-size:13px;font-weight:700;gap:3px}
+.nums small,label.bench small{font-weight:400;opacity:.75}
+input,select{font:inherit;font-size:14px;padding:6px 8px;border:2px solid #141414;border-radius:8px;background:#fff;color:#141414;max-width:100%}
+.primary{margin-top:20px;padding:14px 28px;border:0;border-radius:999px;background:#141414;color:#fff;font:inherit;font-size:18px;font-weight:900;cursor:pointer}
+.errors{background:#fff3f3;color:#a51111;border-radius:14px;padding:12px 16px;margin:12px 0;font-size:14px}
+footer{padding-top:24px;text-align:center;font-size:12px;line-height:1.5;opacity:.9}
 .modal{display:none;position:fixed;inset:0;background:rgba(10,10,40,.72);z-index:50;overflow-y:auto;padding:clamp(12px,3vw,40px)}
 .modal.open{display:block}
-.modal-card{max-width:920px;margin:0 auto;border-radius:24px;padding:clamp(24px,3vw,44px);position:relative;background:#ff795e;color:#141414}
+.modal-card{max-width:1100px;margin:0 auto;border-radius:24px;padding:clamp(22px,3vw,40px);position:relative;background:#fff;color:#141414}
 .modal-card.chat{background:#c5ff32}.modal-card.everyday{background:#ff795e}.modal-card.hard{background:#7926ec;color:#fff}
 .close{position:absolute;top:14px;right:16px;border:2px solid currentColor;background:transparent;color:inherit;font-size:26px;font-weight:900;width:44px;height:44px;border-radius:50%;cursor:pointer;line-height:1}
-.kicker{margin:0;font-size:clamp(13px,1.4vw,16px);font-weight:900;letter-spacing:.09em;text-transform:uppercase}
-.winner{margin:18px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.kicker{margin:0;font-size:14px;font-weight:900;letter-spacing:.09em;text-transform:uppercase}
+.winner{margin:16px 0 0;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
 .winner .use{background:#141414;color:#fff;font-weight:900;font-size:13px;letter-spacing:.08em;padding:8px 14px;border-radius:999px;text-transform:uppercase}
-.winner .name{font-weight:900;font-size:clamp(20px,2.6vw,32px);letter-spacing:-.03em}
-.think{display:inline-block;border:2px solid currentColor;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase}
-.why{margin:12px 0 0;font-size:clamp(16px,1.8vw,22px);line-height:1.35;font-weight:700}
-.chart-box{margin-top:24px;background:#fff;border-radius:16px;padding:clamp(14px,2vw,24px);color:#141414}
+.winner .name{font-weight:900;font-size:clamp(20px,2.6vw,32px)}
+.prices{margin:10px 0 0;font-size:16px}.why{margin:10px 0 0;font-size:clamp(16px,1.7vw,20px);font-weight:700;line-height:1.35}
+.chart-box{margin-top:20px;background:#fff;border-radius:16px;padding:clamp(14px,2vw,24px);color:#141414}
 .chart-box h2{margin:0 0 4px;font-size:15px;font-weight:900;letter-spacing:.05em;text-transform:uppercase}
-.chart-box .sub{margin:0 0 12px;font-size:13px;font-weight:700}
-.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin:2px 0 8px;font-size:12px;font-weight:700;color:#343a40}
-.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:baseline}
+.chart-box .sub{margin:0 0 10px;font-size:13px;opacity:1}
 svg{width:100%;height:auto;display:block}
-.explain{margin:16px 0 0;font-size:clamp(14px,1.5vw,17px);line-height:1.5;max-width:60em}
-table{width:100%;margin-top:20px;border-collapse:collapse;font-size:14px;background:#fff;color:#141414;border-radius:16px;overflow:hidden}
-.table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:20px -4px 0;padding:0 4px}
-.table-scroll table{margin-top:0;min-width:640px}
-@media(max-width:640px){.table-scroll table{font-size:12px;min-width:560px}th,td{padding:7px 8px}}
-caption{text-align:left;font-weight:900;font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:14px 16px 0}
-th,td{text-align:left;padding:11px 14px;border-top:2px solid #ff795e}
-th{font-size:12px;letter-spacing:.06em;text-transform:uppercase}
-th button{background:none;border:0;padding:0;font:inherit;font-size:12px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;color:inherit;cursor:pointer}
-th button:hover{text-decoration:underline}
-.chart-box{position:relative}
-.yrange{margin:0 0 10px;padding:6px 14px;border:2px solid #141414;border-radius:999px;background:#fff;color:#141414;font-size:12px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;cursor:pointer}
-.norm-note{margin:10px 2px 0;font-size:12px;color:#495057}
-svg circle.dot{cursor:pointer}
-.tip{position:absolute;z-index:5;max-width:230px;background:#141414;color:#fff;border-radius:12px;padding:10px 14px;font-size:13px;line-height:1.5;box-shadow:0 6px 20px rgba(0,0,0,.35)}
-.tip strong{display:block;font-size:14px;margin-bottom:2px}
-.provenance{margin:12px 2px 0;font-size:13px;color:#495057;font-weight:700}
-tr.win td{background:#141414;color:#fff;font-weight:900}
-tr.below td{opacity:.55}
-.id-row{margin-top:16px;background:#141414;color:#fff;border-radius:14px;padding:14px 16px;font-size:14px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
-.id-row code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;background:#2a2a2a;padding:8px 12px;border-radius:8px;word-break:break-all}
+.table-scroll{overflow-x:auto;margin-top:16px}
+table{width:100%;border-collapse:collapse;font-size:13px;min-width:520px}
+caption{text-align:left;font-weight:900;font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:6px 0}
+th,td{text-align:left;padding:8px 10px;border-top:1px solid #dee2e6}
+tr.win td{background:#141414;color:#fff;font-weight:900}tr.below td{opacity:.5}
+.norm-note,.unscored{margin:10px 0 0;font-size:12px;color:#495057}
+.id-row{margin-top:16px;background:#141414;color:#fff;border-radius:14px;padding:14px 16px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.id-row code{font-family:ui-monospace,Menlo,monospace;background:#2a2a2a;padding:8px 12px;border-radius:8px;word-break:break-all}
 .id-row .tag{font-size:12px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:#c5ff32}
-@media(max-width:850px){main{grid-template-columns:1fr}article{min-height:390px;padding:30px}h2{max-width:none;font-size:clamp(32px,7vw,48px)}h3{font-size:clamp(52px,10vw,80px);padding-top:52px}.explanation{font-size:16px}header{padding-top:8px}}
-@media(max-width:640px){th:nth-child(2),td:nth-child(2){display:none}.id-row code{font-size:12px}}
-</style>
+.modal-card h2.title{margin:0 0 6px;font-size:28px}
+#lock-cats{display:grid;gap:10px;margin:14px 0}#lock-cats label{display:flex;flex-direction:column;gap:4px;padding:12px;border-radius:14px;font-weight:900}
+#lock-url{width:100%;font-family:ui-monospace,monospace;font-size:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#141414;color:#fff;padding:12px 20px;border-radius:999px;font-weight:700;z-index:60}
+@media(max-width:900px){.cards,.cats{grid-template-columns:1fr}.card{min-height:340px}}`;
+
+const indexHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+${HEAD("Use This Model - which AI model to use", "Pick the benchmarks, price cap and score floor; get the cheapest AI model that clears the bar for chatting, coding and crazy-hard coding. Settings live in the link.")}
+<style>${CSS}</style>
+<script type="module" src="/app.mjs"></script>
 </head>
-<body>
+<body data-state="loading">
 <header>
-<h1>USE THIS MODEL</h1>
-<p>We crunch every major benchmark so you don't have to. Here's what to use right now.</p>
-<div class="pick-date">
-<span class="calc-stamp">${calcIsEstimate
-  ? `<time>Picks for ${esc(calcDateStr)}</time><span class="calc-time" data-calc-estimate="1">time unknown</span>`
-  : `<time datetime="${calcUtc}">Picks for ${esc(calcDateStr)}</time><span class="calc-time" data-calc-utc="${calcUtc}">${esc(calcTimeStr)}</span>`}</span>
-<!-- WebMCP declarative tool: browser agents call recalculate_picks instead of clicking. -->
-<form id="recalc-form" method="POST" action="${RECALC_URL}" toolname="recalculate_picks" tooldescription="Check whether today's picks are stale and trigger a fresh benchmark recompute. POSTs to the recalculation endpoint; responds already-fresh, recalculation-started, in-progress, or a truthful error." toolautosubmit>
-<button class="recalculate" id="recalc" type="submit">Recalculate for today</button>
-</form>
-<p class="recalc-status" id="recalc-status" role="status" aria-live="polite"></p>
+<div class="brand"><h1><a href="/">USE THIS MODEL</a></h1>
+<p class="sub"><time id="updated"></time> &middot; <a href="/docs">How it works</a> &middot; <a href="${C.API_PATH}" rel="nofollow">Bot API</a></p></div>
+<div class="actions needs-picks">
+<button type="button" id="btn-share">Share</button>
+<button type="button" id="btn-lock">Share Locked Models</button>
+<button type="button" id="btn-customize">Customize</button>
 </div>
 </header>
-<main aria-label="AI model recommendations">
-${card("agent", "chat")}
-${card("everyday", "everyday")}
-${card("hard", "hard")}
-</main>
-<footer>Updated ${esc(calcDateStr)} ${esc(calcTimeStr)} - ${linkify("scores: AA Intelligence Index (chat), AA Coding Agent Index + Design Arena Frontend + VALS Vibe/VCB/SWE (coding)")}</footer>
-${modal("agent", "chat", "AA Intelligence Index", 90, why.agent)}
-${modal("everyday", "everyday", "AA Coding + Design Arena Frontend + VALS", 90, why.everyday)}
-${modal("hard", "hard", "AA Coding + Design Arena Frontend + VALS", 97, why.hard)}
-<script>
-(function(){
-function open(key){var m=document.getElementById("modal-"+key);if(m){m.classList.add("open");m.setAttribute("aria-hidden","false");}}
-function close(key){var m=document.getElementById("modal-"+key);if(m){m.classList.remove("open");m.setAttribute("aria-hidden","true");var t=m.querySelector(".tip");if(t)t.hidden=true;}}
-document.querySelectorAll("[data-open]").forEach(function(el){
-el.addEventListener("click",function(){open(el.getAttribute("data-open"));});
-el.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();open(el.getAttribute("data-open"));}});
-});
-document.querySelectorAll("[data-close]").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();close(b.getAttribute("data-close"));});});
-document.querySelectorAll(".modal").forEach(function(m){m.addEventListener("click",function(e){if(e.target===m)m.classList.remove("open");});});
-document.addEventListener("keydown",function(e){if(e.key==="Escape")document.querySelectorAll(".modal.open").forEach(function(m){m.classList.remove("open");var t=m.querySelector(".tip");if(t)t.hidden=true;});});
-// Tap/hover tooltips for chart dots (touch + desktop; native <title> covers desktop hover).
-document.querySelectorAll(".chart-box").forEach(function(box){
-var svg=box.querySelector("svg"),tip=box.querySelector(".tip");
-if(!svg||!tip)return;
-svg.addEventListener("click",function(e){
-var dot=e.target&&e.target.closest?e.target.closest("circle.dot"):null;
-if(!dot){tip.hidden=true;return;}
-e.stopPropagation();
-var s="<strong>"+dot.getAttribute("data-name")+(dot.getAttribute("data-win")?" &#9733; USE THIS":"")+"</strong>"+dot.getAttribute("data-org")+" · Score "+dot.getAttribute("data-score")+"% · $"+dot.getAttribute("data-cost")+"/task";
-tip.innerHTML=s;
-tip.style.visibility="hidden";tip.hidden=false;
-var svgR=svg.getBoundingClientRect(),boxR=box.getBoundingClientRect();
-var cx=parseFloat(dot.getAttribute("cx")),cy=parseFloat(dot.getAttribute("cy"));
-var px=svgR.left-boxR.left+(cx/760)*svgR.width,py=svgR.top-boxR.top+(cy/520)*svgR.height;
-var tw=tip.offsetWidth,th=tip.offsetHeight;
-var left=px+14;if(left+tw>boxR.width-8)left=px-tw-14;if(left<8)left=8;
-var top=py-th-14;if(top<8)top=py+18;
-tip.style.left=left+"px";tip.style.top=top+"px";tip.style.visibility="";
-});
-});
-// Sortable data tables: click Model / Score / Price headers to toggle asc/desc.
-document.querySelectorAll("table.sortable").forEach(function(tbl){
-var body=tbl.querySelector("tbody");
-tbl.querySelectorAll("th button[data-col]").forEach(function(btn){
-btn.addEventListener("click",function(e){
-e.stopPropagation();
-var col=parseInt(btn.getAttribute("data-col"),10);
-var num=btn.getAttribute("data-type")==="num";
-var dir=btn.getAttribute("data-dir")==="asc"?"desc":"asc";
-btn.setAttribute("data-dir",dir);
-tbl.querySelectorAll("th button[data-col]").forEach(function(b){
-var label=b.textContent.replace(/ [▲▼]$/,"");
-b.textContent=label+(b===btn?(dir==="asc"?" ▲":" ▼"):"");
-});
-var rows=Array.prototype.slice.call(body.rows);
-rows.sort(function(a,b){
-var ca=a.cells[col],cb=b.cells[col];
-var va=(ca.getAttribute("data-v")!=null&&ca.getAttribute("data-v")!=="")?ca.getAttribute("data-v"):ca.textContent.trim();
-var vb=(cb.getAttribute("data-v")!=null&&cb.getAttribute("data-v")!=="")?cb.getAttribute("data-v"):cb.textContent.trim();
-if(num&&(va===""||vb==="")){
-if(va===""&&vb==="")return 0;
-return (va==="")?1:-1;
-}
-var cmp=num?(parseFloat(va)-parseFloat(vb)):va.localeCompare(vb);
-return dir==="asc"?cmp:-cmp;
-});
-rows.forEach(function(r){body.appendChild(r);});
-});
-});
-});
-// Y range toggle: zoomed (competitive range) <-> full (0 to top).
-document.querySelectorAll(".chart-box").forEach(function(box){
-var tbtn=box.querySelector(".yrange"),tsvg=box.querySelector("svg");
-if(!tbtn||!tsvg)return;
-tbtn.addEventListener("click",function(e){
-e.stopPropagation();
-var full=tbtn.getAttribute("data-mode")!=="full";
-tbtn.setAttribute("data-mode",full?"full":"zoom");
-tbtn.textContent=full?"Zoom In":"View All";
-var yMinZ=parseFloat(tsvg.getAttribute("data-ymin-zoom")),
-yMax=parseFloat(tsvg.getAttribute("data-ymax")),
-T=parseFloat(tsvg.getAttribute("data-t")),
-B=parseFloat(tsvg.getAttribute("data-b")),
-cut=parseFloat(tsvg.getAttribute("data-cutoff"));
-var Y=function(s){return full?B-((s-0)/(yMax-0))*(B-T):B-((s-yMinZ)/(yMax-yMinZ))*(B-T);};
-tsvg.querySelectorAll("[data-y]").forEach(function(el){
-var v=parseFloat(el.getAttribute("data-y")),dy=parseFloat(el.getAttribute("data-dy")||"0");
-var ny=Math.round(Y(v)+dy),tag=el.tagName.toLowerCase();
-if(tag==="circle")el.setAttribute("cy",ny);
-else if(tag==="text")el.setAttribute("y",ny);
-else if(tag==="line"){el.setAttribute("y1",ny);el.setAttribute("y2",ny);}
-else if(tag==="rect")el.setAttribute("y",ny);
-});
-var z=tsvg.querySelector("[data-zone]");
-if(z)z.setAttribute("height",Math.max(0,Math.round(Y(cut)-T)));
-tsvg.querySelectorAll(".ygrid-zoom").forEach(function(g){g.style.display=full?"none":"";});
-tsvg.querySelectorAll(".ygrid-full").forEach(function(g){g.style.display=full?"":"none";});
-});
-});
-// WebMCP imperative tools + declarative form hookup. Human UX unchanged:
-// the recalc form still POSTs the same endpoint; agents get structured tools.
-// Imperative API: document.modelContext.registerTool({name, description,
-// inputSchema, execute}) per https://webmachinelearning.github.io/webmcp/
-// Declarative API: toolname/tooldescription/toolautosubmit on the recalc
-// <form> per declarative-api-explainer.md in that repo.
-var RECALC_ENDPOINT="${RECALC_URL}";
-function collectPicks(){
-var out={};
-try{var ct=document.querySelector(".calc-time");var utc=ct&&ct.getAttribute("data-calc-utc");if(utc)out.data_calc_utc=utc;}catch(e){}
-try{if(!out.data_date){var dt=document.querySelector(".calc-stamp time");if(dt&&dt.getAttribute("datetime")&&/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(dt.getAttribute("datetime")))out.data_date=dt.getAttribute("datetime");}}catch(e){}
-var picksOut={};
-document.querySelectorAll("[data-webmcp-pick]").forEach(function(el){
-var k=el.getAttribute("data-webmcp-pick");
-picksOut[k]={category:el.getAttribute("data-category"),model:el.getAttribute("data-model"),thinking:el.getAttribute("data-thinking"),pricePerTask:parseFloat(el.getAttribute("data-price")),qualityPct:parseFloat(el.getAttribute("data-quality")),openRouterId:el.getAttribute("data-openrouter-id")};
-});
-out.picks=picksOut;
-return out;
-}
-function isValidTimestamp(v){return typeof v==="string"&&v!==null&&!Number.isNaN(Date.parse(v));}
-function doRecalc(){
-// Truthful status for humans AND WebMCP: resolves to an object, never a
-// fake "already fresh". Statuses: fresh / started / in-progress / error.
-// r.ok is checked FIRST: any non-2xx is an error even if the body carries
-// a plausible JSON status. 2xx bodies must carry a recognized status with
-// its required timestamp (fresh->eligible_after, started/in-progress->
-// in_progress_since); anything else (200 HTML, 200 {}, 500 fresh) errors.
-return fetch(RECALC_ENDPOINT,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})
-.then(function(r){return r.text().then(function(t){var j=null;try{j=JSON.parse(t);}catch(e){}return {ok:r.ok,status:r.status,j:(j&&typeof j==="object")?j:null,raw:t};});})
-.then(function(res){
-if(!res.ok||!res.j)return {status:"error",message:"Recalculation failed: HTTP "+res.status+". Please retry.",last_calc:null};
-var j=res.j,st=j.status;
-if(st==="fresh"){
-if(!isValidTimestamp(j.eligible_after))return {status:"error",message:"Recalculation failed: bad fresh response (missing eligible_after). Please retry.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null};
-return {status:"fresh",message:"Picks already fresh.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null,eligible_after:j.eligible_after};
-}
-if(st==="started"||st==="in-progress"){
-if(!isValidTimestamp(j.in_progress_since))return {status:"error",message:"Recalculation failed: bad "+st+" response (missing in_progress_since). Please retry.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null};
-return {status:st,message:st==="started"?"Recalculation started - fresh picks incoming, check back soon.":"Recalculation already running - check back soon.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null,in_progress_since:j.in_progress_since};
-}
-return {status:"error",message:"Recalculation failed: "+(j.error||("HTTP "+res.status))+". Please retry.",last_calc:isValidTimestamp(j.last_calc)?j.last_calc:null};
-},function(){
-return {status:"error",message:"Recalculation request failed (network error). Please retry.",last_calc:null};
-});
-}
-function shortStatus(r){return r.status==="fresh"?"Already fresh":r.status==="started"?"Started - checking for fresh picks":r.status==="in-progress"?"Already running - checking for fresh picks":"Failed - retry";}
-function recalcMessage(r){var s=shortStatus(r);return s+(r.last_calc?" (last calc "+r.last_calc+")":"");}
-// Bounded freshness polling: after started/in-progress, poll the canonical
-// data-calc.json (cache-busted) for a genuinely NEWER verified timestamp.
-// Reloads the page exactly once, only when the server timestamp is strictly
-// newer than the baked instant - stale polls and fetch failures never
-// trigger a reload and never claim freshness.
-var POLL_MAX = 20, POLL_GAP_MS = 30000;
-function bakedCalcUtc(){try{var el=document.querySelector(".calc-time");var u=el&&el.getAttribute("data-calc-utc");if(u&&!isNaN(new Date(u).getTime()))return new Date(u).getTime();}catch(e){}return null;}
-function fetchLiveUtc(){return fetch("/data-calc.json?_="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();}).then(function(j){if(!j||typeof j.calc_utc!=="string"||isNaN(new Date(j.calc_utc).getTime()))throw new Error("bad data-calc.json");return new Date(j.calc_utc).getTime();});}
-function later(fn){try{if(typeof setTimeout!=="function")return;}catch(e){return;}setTimeout(fn,POLL_GAP_MS);}
-function pollForFresh(bakedMs,left){
-if(left<=0){setRecalcUI(false,"Still computing - check back soon",false);return;}
-fetchLiveUtc().then(function(liveMs){
-if(bakedMs!=null&&liveMs>bakedMs){window.location.reload();return;}
-if(bakedMs==null&&liveMs>0){window.location.reload();return;}
-setRecalcUI(false,"Still computing - checking again soon",false);
-later(function(){pollForFresh(bakedMs,left-1);});
-},function(){
-setRecalcUI(false,"Still computing - checking again soon",false);
-later(function(){pollForFresh(bakedMs,left-1);});
-});
-}
-if(document.modelContext&&document.modelContext.registerTool){
-try{
-document.modelContext.registerTool({name:"get_picks",description:"Returns the 3 current model picks (chatting, everyday coding, crazy hard coding) with model name, thinking level, price per task, quality score, and copy-paste OpenRouter ID.",inputSchema:{type:"object",properties:{}},execute:function(){return Promise.resolve(JSON.stringify(collectPicks()));}});
-document.modelContext.registerTool({name:"recalculate_picks",description:"Check whether today's picks are stale and trigger a fresh benchmark recompute.",inputSchema:{type:"object",properties:{}},execute:function(){return doRecalc();}});
-}catch(e){}
-}
-var recalcForm=document.getElementById("recalc-form");
-// Calc time: rewrite the baked instant in the viewer's own timezone, keeping
-// date+time from the SAME baked instant (data-calc-utc) so rollover agrees.
-// The <time datetime> is a full instant; date text is the viewer's local
-// calendar date for that same instant. Estimate pages have no instant: the
-// server-rendered "time unknown" copy stands, nothing is rewritten.
-(function(){try{var stamp=document.querySelector(".calc-stamp");var el=document.querySelector(".calc-time");if(!stamp||!el||!el.getAttribute("data-calc-utc"))return;var d=new Date(el.getAttribute("data-calc-utc"));if(isNaN(d.getTime()))return;var t=stamp.querySelector("time");if(t){var ds=d.toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});t.textContent="Picks for "+ds;try{t.setAttribute("datetime",d.toISOString());}catch(e){}}var s=d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit",timeZoneName:"short"}).replace(/([AP]M)/,function(m){return m.toLowerCase();}).replace(/\s+(?=[AP]M)/i,"");el.textContent=s;}catch(e){}})();
-// The button keeps ONE stable label ("Recalculate for today") and stays
-// enabled after started/in-progress so a later check/retry is always
-// possible. Status text (short: "Started - check back soon") lives in the
-// separate #recalc-status output, never as a huge pill on the button.
-function setRecalcUI(pending,msg,isErr){
-var btn=document.getElementById("recalc"),st=document.getElementById("recalc-status");
-if(btn){btn.disabled=false;btn.textContent="Recalculate for today";}
-if(st){st.textContent=msg||"";st.setAttribute("data-state",isErr?"error":"ok");}
-}
-if(recalcForm){recalcForm.addEventListener("submit",function(ev){
-if(ev.agentInvoked&&ev.respondWith){ev.preventDefault();ev.respondWith(doRecalc().then(function(r){return JSON.stringify(r);}));return;}
-ev.preventDefault();
-var btn=document.getElementById("recalc");
-if(btn){btn.disabled=true;btn.textContent="Checking...";}
-setRecalcUI(true,"Checking...");
-doRecalc().then(function(r){
-if(r.status==="started"||r.status==="in-progress"){setRecalcUI(false,recalcMessage(r),false);pollForFresh(bakedCalcUtc(),POLL_MAX);return;}
-setRecalcUI(false,recalcMessage(r),r.status==="error");}).catch(function(){setRecalcUI(false,"Failed - retry",true);});
-});}
-})();
-</script>
+<main id="main" aria-live="polite"><noscript><p>This page needs JavaScript. Bots: use <a href="${C.API_PATH}">${C.API_PATH}</a> (see <a href="/docs">/docs</a>).</p></noscript></main>
+<footer>Data refreshed daily from Epoch AI (ECI, CC-BY 4.0), Artificial Analysis, Design Arena, Vals AI. Prices: OpenRouter input list price per 1M tokens. <a href="/docs">Docs</a> &middot; <a href="https://github.com/chipallen2/use-this">GitHub</a></footer>
+
+<div class="modal" id="detail" aria-hidden="true"><div id="detail-body" role="dialog" aria-label="Pick detail"></div></div>
+
+<div class="modal" id="customize" aria-hidden="true"><div class="modal-card" role="dialog" aria-label="Customize settings">
+<button class="close" data-dismiss="customize" aria-label="Close">&times;</button>
+<h2 class="title">Customize</h2>
+<p>Every setting ends up in the page URL. Apply reloads with the new link. <a href="/docs" target="_blank" rel="noopener">What do these settings mean?</a></p>
+<form id="customize-form" novalidate><div class="cats" id="customize-cats"></div>
+<div class="errors" id="customize-errors" hidden></div>
+<button type="submit" class="primary" id="apply">Apply</button></form>
+</div></div>
+
+<div class="modal" id="lock" aria-hidden="true"><div class="modal-card" role="dialog" aria-label="Share locked models">
+<button class="close" data-dismiss="lock" aria-label="Close">&times;</button>
+<h2 class="title">Share Locked Models</h2>
+<p>A locked link always shows exactly these models, even after the data changes, until you send a new link. Change any of them before copying.</p>
+<div id="lock-cats"></div>
+<input id="lock-url" readonly aria-label="Locked link">
+<div class="row"><button type="button" class="primary" id="lock-copy">Copy locked link</button></div>
+</div></div>
+<div id="toast" role="status" hidden></div>
 </body>
-</html>`;
-
-const html = htmlTemplate.split("{LDJSON}").join(ldJson);
-
-// ---- llms.txt (https://llmstxt.org/ spec v2: H1 + blockquote + H2 file lists) ----
-function pickLine(key, title) {
-  const w = picks[key].winner;
-  const [l1, l2] = displayName(w.openRouterId);
-  const full = `${l1}${l2 ? " " + l2 : ""}`;
-  return `- [${title}: ${full} (${effortLabel(w.effort)})](https://usethismodel.vercel.app/) - $${w.costPerTask}/task, quality ${w.relative}%, copy-paste OpenRouter ID: \`${w.openRouterId}\``;
-}
-const llms = `# USE THIS MODEL
-
-> ${calcDateStr} picks (last successful calc: ${calcIsEstimate ? "unknown - data predates calc provenance" : calcUtc}): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
-
-Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE, renormalized when signals absent.
-
-## Picks
-
-${pickLine("agent", "Chatting")}
-${pickLine("everyday", "Everyday Coding")}
-${pickLine("hard", "Crazy Hard Coding")}
-
-## Full page
-
-- [USE THIS MODEL - interactive charts, tables, detail popups](https://usethismodel.vercel.app/)
-
-## For agents
-
-The full page exposes two WebMCP tools (spec: https://webmachinelearning.github.io/webmcp/):
-- \`get_picks\`: Returns the 3 current picks as structured JSON (no args).
-- \`recalculate_picks\`: Triggers a fresh benchmark recompute (no args).
-
-How to call:
-- Requires a WebMCP-capable browser (Chrome 146+ with WebMCP enabled).
-- Call them through the browser agent's \`modelContext\`.
-
-Fallback: Without a WebMCP browser, this llms.txt is the machine-readable source of truth - re-fetch it for fresh picks.
+</html>
 `;
 
-mkdirSync(dirname(OUT), { recursive: true });
-let out = html;
-writeFileSync(OUT, out);
-console.log(`wrote ${OUT} (${out.length} bytes)`);
-writeFileSync(dirname(OUT) + "/llms.txt", llms);
-console.log(`wrote ${dirname(OUT)}/llms.txt (${llms.length} bytes)`);
-// Persisted calc provenance for deploys + verification (never a render-time fake).
-writeFileSync(dirname(OUT) + "/data-calc.json", JSON.stringify({ calc_utc: calcUtc, estimate: calcIsEstimate, data_date: picks.date }, null, 2) + "\n");
-console.log(`wrote ${dirname(OUT)}/data-calc.json`);
+// ---------- docs ----------
+const benchRows = C.BENCHMARKS.map((b) => `<tr><td><code>${b.key}</code></td><td><a href="${b.url}">${esc(b.name)}</a></td><td>${esc(b.about)}</td><td>${data.benchmarks[b.key]?.models ?? 0}</td></tr>`).join("");
+const rec = (k) => `<code>${k}=${C.RECOMMENDED[k].bench.map((b) => b.key).join(",")}&amp;${k}_max=${C.RECOMMENDED[k].max}&amp;${k}_min=${C.RECOMMENDED[k].min}</code>`;
+const docsHtml = `<!DOCTYPE html>
+<html lang="en"><head>
+${HEAD("Use This Model - settings docs", "Every Use This Model URL setting, the normalization method, missing-data modes, price meaning and the bot endpoint.")}
+<style>${CSS}
+.doc{max-width:900px;background:#fff;color:#141414;border-radius:24px;padding:clamp(22px,3vw,44px);line-height:1.55}
+.doc h2{margin:28px 0 8px;font-size:24px}.doc code{background:#f1f3f5;padding:1px 5px;border-radius:5px;font-size:.92em;word-break:break-all}
+.doc pre{background:#141414;color:#fff;padding:14px;border-radius:12px;overflow-x:auto;font-size:13px}.doc pre code{background:none;color:inherit}
+.doc table{min-width:0}</style>
+</head><body data-state="docs">
+<header><div class="brand"><h1><a href="/">USE THIS MODEL</a></h1><p class="sub">Settings reference (format v${C.SETTINGS_VERSION})</p></div></header>
+<main><article class="doc">
+<p>Use This Model shows three cards: <strong>Chatting</strong> (<code>chat</code>), <strong>Everyday Coding</strong> (<code>code</code>) and <strong>Crazy Hard Coding</strong> (<code>crazy</code>). For each one it recommends the <strong>cheapest model whose score is at least your minimum and whose input price is at most your maximum</strong>. There is no database and no account: every setting lives in the URL, so a link is the whole configuration. Save it, share it, or put it behind your own short link.</p>
 
-// Static brand assets: copy assets/* (og-image, favicons) into dist/ so they
-// survive fresh renders and weekly workflow runs.
-try {
-  for (const f of readdirSync("assets")) {
-    copyFileSync(`assets/${f}`, `${dirname(OUT)}/${f}`);
+<h2 id="params">Parameters</h2>
+<p>Each category takes the same parameters, prefixed with its name. Replace <code>chat</code> with <code>code</code> or <code>crazy</code>.</p>
+<table><thead><tr><th>Param</th><th>Required</th><th>Format</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>v</code></td><td>no</td><td><code>1</code></td><td>Settings format version. Omitted means 1. A future breaking change ships as <code>v=2</code>; v1 links keep working.</td></tr>
+<tr><td><code>chat</code></td><td>yes</td><td><code>key[:weight],...</code></td><td>Benchmarks to score with, and their relative weights (default weight 1). <code>chat=eci</code>, <code>chat=eci:2,aai:1</code>.</td></tr>
+<tr><td><code>chat_max</code></td><td>yes</td><td>number &ge; 0</td><td>Max <strong>input</strong> price in USD per 1M tokens. <code>chat_max=1.5</code></td></tr>
+<tr><td><code>chat_min</code></td><td>yes</td><td>0-100</td><td>Min combined score (normalized scale, see below). <code>chat_min=70</code></td></tr>
+<tr><td><code>chat_miss</code></td><td>no</td><td><code>exclude</code> | <code>reweight</code> | <code>zero</code></td><td>What to do when a model has no score on a chosen benchmark. Default <code>exclude</code>.</td></tr>
+<tr><td><code>chat_cov</code></td><td>no</td><td>0-100</td><td>Only with <code>reweight</code>: minimum % of the chosen weight a model must have scores for.</td></tr>
+<tr><td><code>chat_lock</code></td><td>no</td><td>OpenRouter model id</td><td>Locks the card to exactly this model (see Locked links). <code>chat_lock=openai/gpt-6.1-sol</code></td></tr>
+</tbody></table>
+<p>Unknown parameters, duplicated parameters, or invalid values make the link invalid: the page lists exactly what is wrong and the bot endpoint returns HTTP 400. Parameters starting with <code>utm_</code> are ignored so marketing tags never break a link.</p>
+
+<h2 id="benchmarks">Benchmarks</h2>
+<table><thead><tr><th>Key</th><th>Benchmark</th><th>What it measures</th><th>Models today</th></tr></thead><tbody>${benchRows}</tbody></table>
+<p>Benchmark keys are permanent. If a source disappears its key stays valid; models just stop having that score, which the missing-data mode handles.</p>
+
+<h2 id="normalization">How scores are normalized</h2>
+<p>Benchmarks use different scales (ECI points, Elo, % accuracy), so every benchmark is rescaled to 0-100 by Use This Model's data refresh, with one fixed method. It is not a setting.</p>
+<p><strong>${esc(NORMALIZATION)}</strong> A model's raw score is its best published configuration (for example its highest reasoning effort) on that benchmark. Normalization is computed over the models we publish, which are the models we can price.</p>
+<p>The combined score for a category is the weighted average of the chosen normalized scores, so single-benchmark and multi-benchmark settings use the same 0-100 scale and a floor of 80 means the same thing either way. Because the scale is relative to the field, a model's score can move when much stronger or weaker models are added; a score of 100 always means "best tracked model on this benchmark today".</p>
+
+<h2 id="missing">Missing data</h2>
+<ul>
+<li><code>exclude</code> (default): a model must have every chosen benchmark, otherwise it is not ranked.</li>
+<li><code>reweight</code>: average only over the benchmarks the model has, re-dividing by their weights. Add <code>_cov</code> to require a minimum share of weight, e.g. <code>code_miss=reweight&amp;code_cov=50</code>.</li>
+<li><code>zero</code>: a missing benchmark counts as 0.</li>
+</ul>
+<p>In every mode a model with no score on any chosen benchmark is not ranked.</p>
+
+<h2 id="price">Price</h2>
+<p>Price is the model's <strong>input price in USD per 1M tokens</strong>, the OpenRouter list price for that model id. It is one number every provider publishes, so it is comparable across all models. The real cost of a task also depends on output tokens (often several times more expensive per token) and on how verbose or agentic a model is, so two models with the same input price can cost very differently per task. Output price is shown in each model's detail view for reference; filtering and ranking use input price only.</p>
+
+<h2 id="locks">Locked links</h2>
+<p>Normally picks float: when data changes tomorrow, the same link may recommend a newer model. Add <code>chat_lock</code>, <code>code_lock</code> and/or <code>crazy_lock</code> to pin a card to exactly that model. Use <em>Share Locked Models</em> on the page to build one; you can choose any model per category before copying. A locked card always shows the locked model, even if it is retired from the data. Update your link when you want to move.</p>
+
+<h2 id="examples">Examples</h2>
+<p>Recommended settings (ECI everywhere):</p>
+<pre><code>${esc(recUrl)}</code></pre>
+<p>Coding blend, tolerate missing benchmarks if a model has at least half the weight:</p>
+<pre><code>${esc(C.SITE_URL)}/?chat=eci&amp;chat_max=1&amp;chat_min=65&amp;code=aac:2,vibe:1,da:1&amp;code_max=3&amp;code_min=70&amp;code_miss=reweight&amp;code_cov=50&amp;crazy=eci,aac&amp;crazy_max=15&amp;crazy_min=90</code></pre>
+<p>Same settings with locked models:</p>
+<pre><code>${esc(recUrl)}&amp;chat_lock=openai/gpt-6.1-sol&amp;code_lock=anthropic/claude-sonnet-5.5&amp;crazy_lock=anthropic/claude-opus-5.5</code></pre>
+
+<h2 id="api">Bot endpoint</h2>
+<p><code>GET ${C.API_PATH}</code> takes exactly the same parameters and runs the same calculation code as the page, so bots and humans always get the same picks.</p>
+<pre><code>curl '${esc(apiExample)}'</code></pre>
+<p>200 response (abridged):</p>
+<pre><code>{
+  "v": 1,
+  "data_updated_utc": "2026-11-11T12:00:00.000Z",
+  "url": "${esc(recUrl)}",
+  "categories": {
+    "chat": {
+      "title": "Chatting",
+      "status": "ok",            // ok | no-model-qualifies | locked | locked-model-not-in-data
+      "model": { "id": "...", "name": "...", "org": "...",
+                 "input_usd_per_1m": 0.1, "output_usd_per_1m": 0.5, "score": 67.8 },
+      "qualifying_count": 3,
+      "runners_up": [ ... ],
+      "settings": { ... }
+    },
+    "code": { ... }, "crazy": { ... }
   }
-  console.log("copied assets/* -> " + dirname(OUT));
-} catch (e) {
-  console.log("no assets/ dir, skipping static copy");
-}
+}</code></pre>
+<p>No parameters, unknown parameters or invalid values return <strong>HTTP 400</strong>:</p>
+<pre><code>{ "error": "invalid_settings",
+  "errors": [ { "param": "code_min", "problem": "missing (min score, 0-100)" } ],
+  "docs": "${C.DOCS_URL}",
+  "example": "${esc(apiExample)}" }</code></pre>
+<p>Raw data for your own math: <a href="/models.json"><code>/models.json</code></a> (normalized scores, raw scores, input/output $ per 1M, refreshed daily). The calculation module itself is <a href="/calc.mjs"><code>/calc.mjs</code></a>.</p>
+
+<h2 id="sources">Data sources</h2>
+<p>Refreshed daily. Epoch Capabilities Index &copy; Epoch AI, CC-BY 4.0 (<a href="https://epoch.ai/benchmarks">epoch.ai/benchmarks</a>). Artificial Analysis, Design Arena and Vals AI leaderboards. Prices from the OpenRouter model catalog. Only models with an OpenRouter listing (and therefore an input price) are published.</p>
+<p><a href="/">&larr; Back to Use This Model</a></p>
+</article></main></body></html>
+`;
+
+const llms = `# USE THIS MODEL
+
+> Recommends which AI model to use for chatting, everyday coding and crazy-hard coding: the cheapest model that clears a score floor under a price cap. All settings are URL query params; there are no default picks.
+
+## Bot endpoint
+
+- [${C.API_PATH}](${apiExample}) - same params as the page, JSON picks. No/invalid params = HTTP 400 naming the bad settings.
+- [Settings docs](${C.DOCS_URL}) - every param, normalization, missing-data modes, price meaning.
+- [Raw data](${C.SITE_URL}/models.json) - normalized + raw benchmark scores, input/output USD per 1M tokens. Updated ${data.generated_utc}.
+
+## Recommended settings
+
+${recUrl}
+`;
+
+mkdirSync(join(DIST, "docs"), { recursive: true });
+writeFileSync(OUT, indexHtml);
+writeFileSync(join(DIST, "docs", "index.html"), docsHtml);
+writeFileSync(join(DIST, "llms.txt"), llms);
+writeFileSync(join(DIST, "models.json"), JSON.stringify(data));
+copyFileSync("lib/calc.mjs", join(DIST, "calc.mjs"));
+copyFileSync("web/app.mjs", join(DIST, "app.mjs"));
+for (const f of readdirSync("assets")) copyFileSync(`assets/${f}`, join(DIST, f));
+console.log(`wrote ${DIST}: index.html, docs/index.html, llms.txt, models.json (${data.models.length} models), calc.mjs, app.mjs, assets`);

@@ -2,6 +2,13 @@
   "buildCommand": "",
   "installCommand": "",
   "outputDirectory": "dist",
+  "cleanUrls": true,
+  "functions": {
+    "api/picks.mjs": { "includeFiles": "data/models.json" }
+  },
+  "headers": [
+    { "source": "/models.json", "headers": [{ "key": "Cache-Control", "value": "public, max-age=300, s-maxage=3600" }, { "key": "Access-Control-Allow-Origin", "value": "*" }] }
+  ],
   "git": {
     "deploymentEnabled": false
   }
