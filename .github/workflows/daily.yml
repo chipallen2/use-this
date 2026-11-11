@@ -1,0 +1,83 @@
+name: daily-refresh
+
+# Daily data refresh: scrape benchmark scores + OpenRouter prices, publish
+# data/models.json, re-render dist/, deploy. There are NO precalculated
+# picks: browsers and /api/picks compute picks from URL settings.
+# Fails loudly (and deploys nothing) if a required source is down or any
+# model lacks an input price - scripts/scrape.mjs exits 1 before writing.
+on:
+  schedule:
+    - cron: "17 12 * * *" # daily, 12:17 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    # Only the canonical repo refreshes production; forks never run this.
+    if: github.repository == 'chipallen2/use-this' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Owner-scoped token: pushes generated data to protected main.
+          token: ${{ secrets.UT_REPO_WRITE_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install deps
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install chromium --with-deps
+      - name: Refresh data (fails loudly, publishes nothing on error)
+        run: |
+          set -euo pipefail
+          npm run scrape
+          npm run render
+      - name: Unit tests against fresh data
+        run: npm run test:unit
+      - name: Commit if changed
+        run: |
+          set -euo pipefail
+          git config user.name "chipallen2"
+          git config user.email "4950543+chipallen2@users.noreply.github.com"
+          git pull --rebase --autostash origin main
+          git add data/models.json dist
+          git diff --cached --quiet || git commit -m "Daily data $(date -u +%F)"
+          git push
+      - name: Deploy to production
+        # From the REPO ROOT so Vercel deploys dist/ AND the api/ function.
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_CLI_VERSION: "60.0.0"
+        run: |
+          set -euo pipefail
+          export VERCEL_PROJECT_ID="${VERCEL_PROJECT_ID:-prj_kPjFoy9sTPlLOlP98HR10MQp0x4h}"
+          export VERCEL_ORG_ID="${VERCEL_ORG_ID:-team_uXydQqCbMMfY0AFbMihUBTNO}"
+          DEPLOY_OUT="$(npx -y "vercel@${VERCEL_CLI_VERSION}" deploy --prod --yes --token "$VERCEL_TOKEN" --scope chipallen2s-projects 2>&1)"
+          echo "$DEPLOY_OUT" | tail -n 5
+          DEPLOY_URL="$(printf '%s\n' "$DEPLOY_OUT" | grep -oE 'https://[^ ]+\.vercel\.app' | tail -n 1 || true)"
+          if [ -z "$DEPLOY_URL" ]; then echo "no deployment URL in vercel output - failing" >&2; exit 1; fi
+          npx -y "vercel@${VERCEL_CLI_VERSION}" alias set "$DEPLOY_URL" usethismodel.vercel.app --token "$VERCEL_TOKEN" --scope chipallen2s-projects
+      - name: Verify live data + bot endpoint
+        run: |
+          set -euo pipefail
+          WANT=$(node -e 'console.log(require("./data/models.json").generated_utc)')
+          for i in $(seq 1 12); do
+            GOT=$(curl -fsS -H 'Cache-Control: no-cache' "https://usethismodel.vercel.app/models.json?_=$(date +%s)" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).generated_utc))' || true)
+            [ "$GOT" = "$WANT" ] && break
+            echo "live=$GOT want=$WANT, retry $i"; sleep 10
+          done
+          [ "$GOT" = "$WANT" ] || { echo "live models.json never matched" >&2; exit 1; }
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' https://usethismodel.vercel.app/api/picks)
+          [ "$CODE" = "400" ] || { echo "/api/picks without params returned $CODE, expected 400" >&2; exit 1; }
+          curl -fsS "https://usethismodel.vercel.app/api/picks?chat=eci&chat_max=1&chat_min=65&code=eci&code_max=3&code_min=80&crazy=eci&crazy_max=15&crazy_min=95" > /dev/null

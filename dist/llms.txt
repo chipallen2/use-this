@@ -1,27 +1,13 @@
 # USE THIS MODEL
 
-> November 9, 2026 picks (last successful calc: 2026-11-09T21:55:02.000Z): the single best AI model to use today for chatting, everyday coding, and crazy-hard coding, recomputed from live benchmarks.
+> Recommends which AI model to use for chatting, everyday coding and crazy-hard coding: the cheapest model that clears a score floor under a price cap. All settings are URL query params; there are no default picks.
 
-Cheapest model clearing the cutoff wins: 90% of frontier quality for chatting and everyday coding, 97% for crazy-hard coding. Chat score = Artificial Analysis Intelligence Index; coding score = 35% AA Coding Agent Index + 25% Design Arena Frontend + 13.3% each VALS Vibe/VCB/SWE, renormalized when signals absent.
+## Bot endpoint
 
-## Picks
+- [/api/picks](https://usethismodel.vercel.app/api/picks?chat=eci&chat_max=1&chat_min=65&code=eci&code_max=3&code_min=80&crazy=eci&crazy_max=15&crazy_min=95) - same params as the page, JSON picks. No/invalid params = HTTP 400 naming the bad settings.
+- [Settings docs](https://usethismodel.vercel.app/docs) - every param, normalization, missing-data modes, price meaning.
+- [Raw data](https://usethismodel.vercel.app/models.json) - normalized + raw benchmark scores, input/output USD per 1M tokens. Updated 2026-11-11T23:23:28.820Z.
 
-- [Chatting: GPT 6.1 sol (max thinking)](https://usethismodel.vercel.app/) - $1.27/task, quality 100%, copy-paste OpenRouter ID: `openai/gpt-6.1-sol`
-- [Everyday Coding: Claude Opus 5.5 (default)](https://usethismodel.vercel.app/) - $11.42/task, quality 100%, copy-paste OpenRouter ID: `anthropic/claude-opus-5.5`
-- [Crazy Hard Coding: Claude Opus 5.5 (default)](https://usethismodel.vercel.app/) - $11.42/task, quality 100%, copy-paste OpenRouter ID: `anthropic/claude-opus-5.5`
+## Recommended settings
 
-## Full page
-
-- [USE THIS MODEL - interactive charts, tables, detail popups](https://usethismodel.vercel.app/)
-
-## For agents
-
-The full page exposes two WebMCP tools (spec: https://webmachinelearning.github.io/webmcp/):
-- `get_picks`: Returns the 3 current picks as structured JSON (no args).
-- `recalculate_picks`: Triggers a fresh benchmark recompute (no args).
-
-How to call:
-- Requires a WebMCP-capable browser (Chrome 146+ with WebMCP enabled).
-- Call them through the browser agent's `modelContext`.
-
-Fallback: Without a WebMCP browser, this llms.txt is the machine-readable source of truth - re-fetch it for fresh picks.
+https://usethismodel.vercel.app/?chat=eci&chat_max=1&chat_min=65&code=eci&code_max=3&code_min=80&crazy=eci&crazy_max=15&crazy_min=95

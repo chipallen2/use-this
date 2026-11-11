@@ -1,15 +1,16 @@
 {
   "name": "use-this",
   "version": "1.0.0",
-  "description": "USE THIS - today's best model for chatting, coding, and crazy-hard coding. Static index.html rendered by an owner-triggered GitHub Actions workflow.",
+  "description": "Use This Model - tells your team which AI model to use for chatting, coding and crazy-hard coding. Stateless: all settings live in the URL; daily data refresh.",
   "type": "module",
   "scripts": {
     "scrape": "node scripts/scrape.mjs data",
     "render": "node scripts/render.mjs data dist/index.html",
     "build": "node scripts/render.mjs data dist/index.html",
-    "test": "node --test tests/recalc.test.mjs tests/matcher.test.mjs tests/e2e.test.mjs",
-    "test:e2e": "node --test tests/e2e.test.mjs",
-    "test:unit": "node --test tests/recalc.test.mjs tests/matcher.test.mjs"
+    "serve": "node tests/serve.mjs",
+    "test": "node --test tests/calc.test.mjs tests/models-data.test.mjs tests/matcher.test.mjs tests/migration.test.mjs tests/e2e.test.mjs",
+    "test:unit": "node --test tests/calc.test.mjs tests/models-data.test.mjs tests/matcher.test.mjs",
+    "test:e2e": "node --test tests/e2e.test.mjs"
   },
   "engines": {
     "node": ">=20"
