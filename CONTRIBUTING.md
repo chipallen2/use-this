@@ -9,8 +9,10 @@ are welcome. Open an issue to discuss larger changes before investing much work.
 2. Create a branch from `main`.
 3. Use Node.js 20 or later, then run `npm ci` and
    `npx playwright install chromium`.
-4. Make a focused change. Use `npm run render` to rebuild from checked-in data;
-   `npm run scrape` fetches live benchmark sources and changes the data.
+4. Make a focused change (read [AGENTS.md](AGENTS.md): v1 URL settings are a
+   frozen contract). Use `npm run render` to rebuild from checked-in data and
+   `npm run serve` to try it; `npm run scrape` fetches live sources and changes
+   `data/models.json`.
 5. Run `npm test`. For changes to benchmark parsing, refresh matching fixtures
    and assertions together; see `tests/fixtures/README.md`.
 6. Push your branch to your fork and open a PR against `chipallen2/use-this:main`.
@@ -21,8 +23,8 @@ PRs do not automatically run CI or deploy. Maintainers review and test changes
 before merging. Resolve review conversations and keep generated files related
 to your change. Never include tokens, `.env` files, or production credentials.
 
-You do not need production credentials to contribute. Do not use the public
-recalculate endpoint to test changes; production recomputation is maintainer-only.
+You do not need production credentials to contribute. The daily data refresh
+and production deploys are maintainer-only.
 Treat other contributors respectfully and keep discussion focused on the work.
 
 ## License status
