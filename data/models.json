@@ -1,0 +1,1707 @@
+{
+ "schema": 1,
+ "generated_utc": "2026-11-11T23:23:28.820Z",
+ "normalization": "Per benchmark: min-max over published models. score = 100 * (raw - min) / (max - min), rounded to 0.1. Best published model = 100, weakest = 0.",
+ "price": "input/output = USD per 1M tokens, OpenRouter list price",
+ "benchmarks": {
+  "eci": {
+   "name": "Epoch Capabilities Index (ECI)",
+   "source": "Epoch AI",
+   "url": "https://epoch.ai/benchmarks/eci",
+   "models": 75,
+   "raw_min": 133.05,
+   "raw_max": 173.44
+  },
+  "aai": {
+   "name": "Artificial Analysis Intelligence Index",
+   "source": "Artificial Analysis",
+   "url": "https://artificialanalysis.ai/leaderboards/models",
+   "models": 33,
+   "raw_min": 4,
+   "raw_max": 65
+  },
+  "aac": {
+   "name": "Artificial Analysis Coding Agent Index",
+   "source": "Artificial Analysis",
+   "url": "https://artificialanalysis.ai/agents/coding-agents",
+   "models": 24,
+   "raw_min": 20.5,
+   "raw_max": 61.7
+  },
+  "da": {
+   "name": "Design Arena Frontend (Elo)",
+   "source": "Design Arena",
+   "url": "https://www.designarena.ai/leaderboard?section=agentic-web-dev",
+   "models": 44,
+   "raw_min": 1001,
+   "raw_max": 1341
+  },
+  "vibe": {
+   "name": "Vals AI Vibe Code",
+   "source": "Vals AI",
+   "url": "https://vals.ai/benchmarks/vibe-code",
+   "models": 72,
+   "raw_min": 15.738,
+   "raw_max": 93.771
+  },
+  "vcb": {
+   "name": "Vals AI VCB 1-100",
+   "source": "Vals AI",
+   "url": "https://vals.ai/benchmarks/vcb-1-100",
+   "models": 24,
+   "raw_min": 6.694,
+   "raw_max": 33.978
+  },
+  "swe": {
+   "name": "Vals AI SWE-bench Multimodal",
+   "source": "Vals AI",
+   "url": "https://vals.ai/benchmarks/swebench-multimodal",
+   "models": 20,
+   "raw_min": 33.333,
+   "raw_max": 70.208
+  }
+ },
+ "models": [
+  {
+   "id": "anthropic/claude-fable-5",
+   "name": "Claude Fable 5",
+   "org": "Anthropic",
+   "input": 10,
+   "output": 50,
+   "scores": {
+    "eci": 76.9,
+    "da": 71.5,
+    "vibe": 95.6
+   },
+   "raw": {
+    "eci": 164.13,
+    "da": 1244,
+    "vibe": 90.352
+   }
+  },
+  {
+   "id": "anthropic/claude-fable-5.1",
+   "name": "Claude Fable 5.1",
+   "org": "Anthropic",
+   "input": 10,
+   "output": 50,
+   "scores": {
+    "eci": 84,
+    "aac": 90,
+    "da": 92.6,
+    "vibe": 95.5,
+    "vcb": 78.1,
+    "swe": 75.7
+   },
+   "raw": {
+    "eci": 166.99,
+    "aac": 57.6,
+    "da": 1316,
+    "vibe": 90.263,
+    "vcb": 28,
+    "swe": 61.25
+   }
+  },
+  {
+   "id": "anthropic/claude-fable-5.2",
+   "name": "Claude Fable 5.2",
+   "org": "Anthropic",
+   "input": 8,
+   "output": 40,
+   "scores": {
+    "eci": 100,
+    "aai": 100,
+    "vibe": 100,
+    "swe": 78.5
+   },
+   "raw": {
+    "eci": 173.44,
+    "aai": 65,
+    "vibe": 93.771,
+    "swe": 62.292
+   },
+   "effort": {
+    "aai": "max"
+   }
+  },
+  {
+   "id": "anthropic/claude-haiku-5.5",
+   "name": "Claude Haiku 5.5",
+   "org": "Anthropic",
+   "input": 0.1,
+   "output": 0.5,
+   "scores": {
+    "eci": 67.8,
+    "aai": 52.5,
+    "aac": 40.8,
+    "vibe": 95.7,
+    "vcb": 50.3,
+    "swe": 28.8
+   },
+   "raw": {
+    "eci": 160.43,
+    "aai": 36,
+    "aac": 37.3,
+    "vibe": 90.444,
+    "vcb": 20.406,
+    "swe": 43.958
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-4.1",
+   "name": "Claude Opus 4.1",
+   "org": "Anthropic",
+   "input": 15,
+   "output": 75,
+   "scores": {
+    "eci": 29.2
+   },
+   "raw": {
+    "eci": 144.84
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-4.5",
+   "name": "Claude Opus 4.5",
+   "org": "Anthropic",
+   "input": 5,
+   "output": 25,
+   "scores": {
+    "eci": 46.7
+   },
+   "raw": {
+    "eci": 151.92
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-4.6",
+   "name": "Claude Opus 4.6",
+   "org": "Anthropic",
+   "input": 5,
+   "output": 25,
+   "scores": {
+    "eci": 57.7,
+    "da": 54.7,
+    "vibe": 53.6
+   },
+   "raw": {
+    "eci": 156.34,
+    "da": 1187,
+    "vibe": 57.573
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-4.7",
+   "name": "Claude Opus 4.7",
+   "org": "Anthropic",
+   "input": 5,
+   "output": 25,
+   "scores": {
+    "eci": 60.4,
+    "vibe": 70.8
+   },
+   "raw": {
+    "eci": 157.44,
+    "vibe": 71.003
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-4.8",
+   "name": "Claude Opus 4.8",
+   "org": "Anthropic",
+   "input": 5,
+   "output": 25,
+   "scores": {
+    "eci": 66.6,
+    "da": 63.2,
+    "vibe": 85.8
+   },
+   "raw": {
+    "eci": 159.94,
+    "da": 1216,
+    "vibe": 82.725
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-5",
+   "name": "Claude Opus 5",
+   "org": "Anthropic",
+   "input": 5,
+   "output": 25,
+   "scores": {
+    "eci": 78.3,
+    "da": 74.1,
+    "vibe": 93.1,
+    "vcb": 80
+   },
+   "raw": {
+    "eci": 164.68,
+    "da": 1253,
+    "vibe": 88.404,
+    "vcb": 28.533
+   }
+  },
+  {
+   "id": "anthropic/claude-opus-5.5",
+   "name": "Claude Opus 5.5",
+   "org": "Anthropic",
+   "input": 4,
+   "output": 20,
+   "scores": {
+    "eci": 87.9,
+    "aai": 90.2,
+    "aac": 100,
+    "da": 92.6,
+    "vibe": 95.5,
+    "vcb": 86.7,
+    "swe": 100
+   },
+   "raw": {
+    "eci": 168.54,
+    "aai": 59,
+    "aac": 61.7,
+    "da": 1316,
+    "vibe": 90.294,
+    "vcb": 30.361,
+    "swe": 70.208
+   },
+   "effort": {
+    "aai": "max"
+   }
+  },
+  {
+   "id": "anthropic/claude-sonnet-4.5",
+   "name": "Claude Sonnet 4.5",
+   "org": "Anthropic",
+   "input": 3,
+   "output": 15,
+   "scores": {
+    "eci": 36.1
+   },
+   "raw": {
+    "eci": 147.63
+   }
+  },
+  {
+   "id": "anthropic/claude-sonnet-4.6",
+   "name": "Claude Sonnet 4.6",
+   "org": "Anthropic",
+   "input": 3,
+   "output": 15,
+   "scores": {
+    "eci": 49,
+    "da": 50.6,
+    "vibe": 51.3
+   },
+   "raw": {
+    "eci": 152.86,
+    "da": 1173,
+    "vibe": 55.774
+   }
+  },
+  {
+   "id": "anthropic/claude-sonnet-5",
+   "name": "Claude Sonnet 5",
+   "org": "Anthropic",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 59.1,
+    "da": 65.3,
+    "vibe": 84.1,
+    "vcb": 26.1
+   },
+   "raw": {
+    "eci": 156.94,
+    "da": 1223,
+    "vibe": 81.325,
+    "vcb": 13.822
+   }
+  },
+  {
+   "id": "anthropic/claude-sonnet-5.5",
+   "name": "Claude Sonnet 5.5",
+   "org": "Anthropic",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 83,
+    "aai": 83.6,
+    "aac": 94.2,
+    "da": 81.8,
+    "vibe": 98.2,
+    "swe": 67.8
+   },
+   "raw": {
+    "eci": 166.56,
+    "aai": 55,
+    "aac": 59.3,
+    "da": 1279,
+    "vibe": 92.392,
+    "swe": 58.333
+   },
+   "effort": {
+    "aai": "max"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-flash",
+   "name": "DeepSeek V4 Flash 0423",
+   "org": "DeepSeek",
+   "input": 0.09,
+   "output": 0.18,
+   "scores": {
+    "eci": 52.9,
+    "vibe": 75.6
+   },
+   "raw": {
+    "eci": 154.41,
+    "vibe": 74.736
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4-pro-0813",
+   "name": "DeepSeek V4 Pro 0813",
+   "org": "DeepSeek",
+   "input": 0.111,
+   "output": 4.44,
+   "scores": {
+    "eci": 56.7,
+    "aai": 31.1,
+    "vibe": 85.3,
+    "vcb": 39.7
+   },
+   "raw": {
+    "eci": 155.94,
+    "aai": 23,
+    "vibe": 82.297,
+    "vcb": 17.533
+   },
+   "effort": {
+    "aai": "max"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4.1-flash",
+   "name": "DeepSeek V4.1 Flash",
+   "org": "DeepSeek",
+   "input": 0.051,
+   "output": 0.567,
+   "scores": {
+    "eci": 58.6,
+    "aac": 65,
+    "vibe": 88.4,
+    "vcb": 35.5,
+    "swe": 35.6
+   },
+   "raw": {
+    "eci": 156.7,
+    "aac": 47.3,
+    "vibe": 84.739,
+    "vcb": 16.378,
+    "swe": 46.458
+   },
+   "effort": {
+    "aac": "max"
+   }
+  },
+  {
+   "id": "deepseek/deepseek-v4.1-flash-1017",
+   "name": "DeepSeek V4.1 Flash 1017",
+   "org": "DeepSeek",
+   "input": 0.006,
+   "output": 0.5,
+   "scores": {
+    "eci": 65.3,
+    "aai": 47.5,
+    "aac": 62.6,
+    "vibe": 92.3
+   },
+   "raw": {
+    "eci": 159.41,
+    "aai": 33,
+    "aac": 46.3,
+    "vibe": 87.73
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "google/gemini-2.5-flash",
+   "name": "Gemini 2.5 Flash",
+   "org": "Google",
+   "input": 0.3,
+   "output": 2.5,
+   "scores": {
+    "eci": 22
+   },
+   "raw": {
+    "eci": 141.93
+   }
+  },
+  {
+   "id": "google/gemini-2.5-flash-lite",
+   "name": "Gemini 2.5 Flash Lite",
+   "org": "Google",
+   "input": 0.1,
+   "output": 0.4,
+   "scores": {
+    "eci": 0
+   },
+   "raw": {
+    "eci": 133.05
+   }
+  },
+  {
+   "id": "google/gemini-3-flash-preview",
+   "name": "Gemini 3 Flash Preview",
+   "org": "Google",
+   "input": 0.5,
+   "output": 3,
+   "scores": {
+    "da": 27.1,
+    "vibe": 5.7
+   },
+   "raw": {
+    "da": 1093,
+    "vibe": 20.204
+   }
+  },
+  {
+   "id": "google/gemini-3.1-pro-preview",
+   "name": "Gemini 3.1 Pro Preview",
+   "org": "Google",
+   "input": 2,
+   "output": 12,
+   "scores": {
+    "eci": 57.3,
+    "da": 31.8,
+    "vibe": 20.9,
+    "vcb": 0
+   },
+   "raw": {
+    "eci": 156.18,
+    "da": 1109,
+    "vibe": 32.034,
+    "vcb": 6.694
+   }
+  },
+  {
+   "id": "google/gemini-3.5-flash",
+   "name": "Gemini 3.5 Flash",
+   "org": "Google",
+   "input": 1.5,
+   "output": 9,
+   "scores": {
+    "eci": 55,
+    "da": 53.5,
+    "vibe": 42.2
+   },
+   "raw": {
+    "eci": 155.28,
+    "da": 1183,
+    "vibe": 48.683
+   }
+  },
+  {
+   "id": "google/gemini-3.5-flash-lite",
+   "name": "Gemini 3.5 Flash Lite",
+   "org": "Google",
+   "input": 0.3,
+   "output": 2.5,
+   "scores": {
+    "eci": 31.1,
+    "aai": 13.1,
+    "vibe": 27.5
+   },
+   "raw": {
+    "eci": 145.63,
+    "aai": 12,
+    "vibe": 37.161
+   }
+  },
+  {
+   "id": "google/gemini-3.6-flash",
+   "name": "Gemini 3.6 Flash",
+   "org": "Google",
+   "input": 0.75,
+   "output": 3.75,
+   "scores": {
+    "eci": 54.9,
+    "da": 52.6,
+    "vibe": 61.9
+   },
+   "raw": {
+    "eci": 155.21,
+    "da": 1180,
+    "vibe": 64.005
+   }
+  },
+  {
+   "id": "google/gemini-3.7-flash",
+   "name": "Gemini 3.7 Flash",
+   "org": "Google",
+   "input": 0.75,
+   "output": 3.75,
+   "scores": {
+    "eci": 62.7,
+    "da": 61.8,
+    "vibe": 70
+   },
+   "raw": {
+    "eci": 158.36,
+    "da": 1211,
+    "vibe": 70.395
+   }
+  },
+  {
+   "id": "google/gemini-3.8-flash",
+   "name": "Gemini 3.8 Flash",
+   "org": "Google",
+   "input": 0.825,
+   "output": 4.125,
+   "scores": {
+    "eci": 63.7,
+    "aai": 44.3,
+    "aac": 31.1,
+    "da": 65.6,
+    "vibe": 80.6,
+    "vcb": 44.3,
+    "swe": 20.3
+   },
+   "raw": {
+    "eci": 158.79,
+    "aai": 31,
+    "aac": 33.3,
+    "da": 1224,
+    "vibe": 78.651,
+    "vcb": 18.772,
+    "swe": 40.833
+   },
+   "effort": {
+    "aai": "high",
+    "aac": "high"
+   }
+  },
+  {
+   "id": "google/gemini-4-argon",
+   "name": "Gemini 4 Argon",
+   "org": "Google",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 82.8,
+    "aai": 75.4,
+    "aac": 79.4,
+    "vibe": 97.6,
+    "vcb": 53.2,
+    "swe": 61.6
+   },
+   "raw": {
+    "eci": 166.48,
+    "aai": 50,
+    "aac": 53.2,
+    "vibe": 91.906,
+    "vcb": 21.2,
+    "swe": 56.042
+   },
+   "effort": {
+    "aai": "high",
+    "aac": "high"
+   }
+  },
+  {
+   "id": "google/gemini-4-carbon",
+   "name": "Gemini 4 Carbon",
+   "org": "Google",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 90.9,
+    "aai": 91.8,
+    "aac": 94.4,
+    "vibe": 94
+   },
+   "raw": {
+    "eci": 169.76,
+    "aai": 60,
+    "aac": 59.4,
+    "vibe": 89.06
+   },
+   "effort": {
+    "aai": "high",
+    "aac": "high"
+   }
+  },
+  {
+   "id": "inclusionai/ling-3.1-flash",
+   "name": "Ling 3.1 Flash",
+   "org": "inclusionAI",
+   "input": 0.045,
+   "output": 0.135,
+   "scores": {
+    "aai": 42.6
+   },
+   "raw": {
+    "aai": 30
+   }
+  },
+  {
+   "id": "meta/muse-ember",
+   "name": "Muse Ember",
+   "org": "Meta",
+   "input": 0.1,
+   "output": 0.5,
+   "scores": {
+    "aai": 52.5,
+    "aac": 61.7,
+    "vibe": 87.1
+   },
+   "raw": {
+    "aai": 36,
+    "aac": 45.9,
+    "vibe": 83.703
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "meta/muse-glimmer-30b",
+   "name": "Muse Glimmer 30B",
+   "org": "Meta",
+   "input": 0.3,
+   "output": 1.2,
+   "scores": {
+    "aai": 3.3
+   },
+   "raw": {
+    "aai": 6
+   },
+   "effort": {
+    "aai": "high"
+   }
+  },
+  {
+   "id": "meta/muse-spark-1.1",
+   "name": "Muse Spark 1.1",
+   "org": "Meta",
+   "input": 1.25,
+   "output": 4.25,
+   "scores": {
+    "eci": 54,
+    "vibe": 72.3
+   },
+   "raw": {
+    "eci": 154.87,
+    "vibe": 72.158
+   }
+  },
+  {
+   "id": "meta/muse-spark-1.2",
+   "name": "Muse Spark 1.2",
+   "org": "Meta",
+   "input": 1.25,
+   "output": 4.25,
+   "scores": {
+    "eci": 54.4,
+    "da": 60,
+    "vibe": 81.2
+   },
+   "raw": {
+    "eci": 155.04,
+    "da": 1205,
+    "vibe": 79.1
+   }
+  },
+  {
+   "id": "meta/muse-spark-1.2-contributor",
+   "name": "Muse Spark 1.2 Contributor",
+   "org": "Meta",
+   "input": 0.1,
+   "output": 0.2,
+   "scores": {
+    "eci": 54.4,
+    "da": 60,
+    "vibe": 81.2
+   },
+   "raw": {
+    "eci": 155.04,
+    "da": 1205,
+    "vibe": 79.1
+   }
+  },
+  {
+   "id": "meta/muse-spark-1.3",
+   "name": "Muse Spark 1.3",
+   "org": "Meta",
+   "input": 1.25,
+   "output": 4.25,
+   "scores": {
+    "eci": 62.4,
+    "aac": 61.2,
+    "da": 82.6,
+    "vibe": 89.9,
+    "vcb": 50.5,
+    "swe": 26.6
+   },
+   "raw": {
+    "eci": 158.24,
+    "aac": 45.7,
+    "da": 1282,
+    "vibe": 85.856,
+    "vcb": 20.461,
+    "swe": 43.125
+   },
+   "effort": {
+    "aac": "max"
+   }
+  },
+  {
+   "id": "meta/muse-spark-1.3-contributor",
+   "name": "Muse Spark 1.3 Contributor",
+   "org": "Meta",
+   "input": 0.1,
+   "output": 0.2,
+   "scores": {
+    "eci": 62.4,
+    "aac": 61.2,
+    "da": 82.6,
+    "vibe": 89.9,
+    "vcb": 50.5,
+    "swe": 26.6
+   },
+   "raw": {
+    "eci": 158.24,
+    "aac": 45.7,
+    "da": 1282,
+    "vibe": 85.856,
+    "vcb": 20.461,
+    "swe": 43.125
+   },
+   "effort": {
+    "aac": "max"
+   }
+  },
+  {
+   "id": "meta/muse-spark-open",
+   "name": "Muse Spark Open",
+   "org": "Meta",
+   "input": 1.25,
+   "output": 4.25,
+   "scores": {
+    "eci": 55.4,
+    "aai": 34.4,
+    "aac": 14.1,
+    "vibe": 77.5
+   },
+   "raw": {
+    "eci": 155.42,
+    "aai": 25,
+    "aac": 26.3,
+    "vibe": 76.187
+   },
+   "effort": {
+    "aai": "xhigh",
+    "aac": "xhigh"
+   }
+  },
+  {
+   "id": "meta/muse-wonder",
+   "name": "Muse Wonder",
+   "org": "Meta",
+   "input": 4,
+   "output": 20,
+   "scores": {
+    "eci": 70.9,
+    "aai": 65.6,
+    "aac": 93.2,
+    "vibe": 90,
+    "vcb": 100,
+    "swe": 37.9
+   },
+   "raw": {
+    "eci": 161.68,
+    "aai": 44,
+    "aac": 58.9,
+    "vibe": 85.996,
+    "vcb": 33.978,
+    "swe": 47.292
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "minimax/minimax-m3",
+   "name": "MiniMax M3",
+   "org": "MiniMax",
+   "input": 0.3,
+   "output": 1.2,
+   "scores": {
+    "eci": 36.4,
+    "aai": 24.6,
+    "da": 56.5,
+    "vibe": 40.8,
+    "vcb": 9.3,
+    "swe": 0
+   },
+   "raw": {
+    "eci": 147.74,
+    "aai": 19,
+    "da": 1193,
+    "vibe": 47.566,
+    "vcb": 9.222,
+    "swe": 33.333
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k2.5",
+   "name": "Kimi K2.5",
+   "org": "MoonshotAI",
+   "input": 0.532,
+   "output": 3.325,
+   "scores": {
+    "eci": 38.9,
+    "da": 34.4,
+    "vibe": 2.3
+   },
+   "raw": {
+    "eci": 148.76,
+    "da": 1118,
+    "vibe": 17.536
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k2.6",
+   "name": "Kimi K2.6",
+   "org": "MoonshotAI",
+   "input": 0.65,
+   "output": 3.41,
+   "scores": {
+    "eci": 45.8,
+    "vibe": 28.4
+   },
+   "raw": {
+    "eci": 151.56,
+    "vibe": 37.891
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k2.7-code",
+   "name": "Kimi K2.7 Code",
+   "org": "MoonshotAI",
+   "input": 0.6,
+   "output": 3.5,
+   "scores": {
+    "eci": 44.8,
+    "da": 46.5,
+    "vibe": 40.3
+   },
+   "raw": {
+    "eci": 151.15,
+    "da": 1159,
+    "vibe": 47.211
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k3",
+   "name": "Kimi K3",
+   "org": "MoonshotAI",
+   "input": 0.192,
+   "output": 16,
+   "scores": {
+    "eci": 63.2,
+    "aac": 50.7,
+    "da": 82.1,
+    "vibe": 88.7,
+    "vcb": 42.3,
+    "swe": 29.4
+   },
+   "raw": {
+    "eci": 158.58,
+    "aac": 41.4,
+    "da": 1280,
+    "vibe": 84.968,
+    "vcb": 18.244,
+    "swe": 44.167
+   },
+   "effort": {
+    "aac": "max"
+   }
+  },
+  {
+   "id": "moonshotai/kimi-k3.1-pro",
+   "name": "Kimi K3.1 Pro",
+   "org": "MoonshotAI",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 70.1,
+    "aai": 68.9,
+    "da": 86.8,
+    "vibe": 88.6
+   },
+   "raw": {
+    "eci": 161.37,
+    "aai": 46,
+    "da": 1296,
+    "vibe": 84.894
+   }
+  },
+  {
+   "id": "openai/gpt-5.1-codex",
+   "name": "GPT-5.1-Codex",
+   "org": "OpenAI",
+   "input": 1.25,
+   "output": 10,
+   "scores": {
+    "da": 0,
+    "vibe": 8.2
+   },
+   "raw": {
+    "da": 1001,
+    "vibe": 22.168
+   }
+  },
+  {
+   "id": "openai/gpt-5.2",
+   "name": "GPT-5.2",
+   "org": "OpenAI",
+   "input": 1.75,
+   "output": 14,
+   "scores": {
+    "eci": 53,
+    "da": 19.7
+   },
+   "raw": {
+    "eci": 154.46,
+    "da": 1068
+   }
+  },
+  {
+   "id": "openai/gpt-5.2-codex",
+   "name": "GPT-5.2-Codex",
+   "org": "OpenAI",
+   "input": 1.75,
+   "output": 14,
+   "scores": {
+    "da": 9.4,
+    "vibe": 28.4
+   },
+   "raw": {
+    "da": 1033,
+    "vibe": 37.912
+   }
+  },
+  {
+   "id": "openai/gpt-5.2-pro",
+   "name": "GPT-5.2 Pro",
+   "org": "OpenAI",
+   "input": 21,
+   "output": 168,
+   "scores": {
+    "eci": 60
+   },
+   "raw": {
+    "eci": 157.27
+   }
+  },
+  {
+   "id": "openai/gpt-5.3-codex",
+   "name": "GPT-5.3-Codex",
+   "org": "OpenAI",
+   "input": 1.75,
+   "output": 14,
+   "scores": {
+    "da": 4.1,
+    "vibe": 59
+   },
+   "raw": {
+    "da": 1015,
+    "vibe": 61.767
+   }
+  },
+  {
+   "id": "openai/gpt-5.4",
+   "name": "GPT-5.4",
+   "org": "OpenAI",
+   "input": 2.5,
+   "output": 15,
+   "scores": {
+    "eci": 61.4,
+    "da": 11.8,
+    "vibe": 42
+   },
+   "raw": {
+    "eci": 157.85,
+    "da": 1041,
+    "vibe": 48.474
+   }
+  },
+  {
+   "id": "openai/gpt-5.4-pro",
+   "name": "GPT-5.4 Pro",
+   "org": "OpenAI",
+   "input": 30,
+   "output": 180,
+   "scores": {
+    "eci": 67.3
+   },
+   "raw": {
+    "eci": 160.24
+   }
+  },
+  {
+   "id": "openai/gpt-5.5",
+   "name": "GPT-5.5",
+   "org": "OpenAI",
+   "input": 5,
+   "output": 30,
+   "scores": {
+    "eci": 67,
+    "da": 28.8,
+    "vibe": 69.3
+   },
+   "raw": {
+    "eci": 160.1,
+    "da": 1099,
+    "vibe": 69.847
+   }
+  },
+  {
+   "id": "openai/gpt-5.5-pro",
+   "name": "GPT-5.5 Pro",
+   "org": "OpenAI",
+   "input": 30,
+   "output": 180,
+   "scores": {
+    "eci": 73.4
+   },
+   "raw": {
+    "eci": 162.7
+   }
+  },
+  {
+   "id": "openai/gpt-5.6-luna",
+   "name": "GPT-5.6 Luna",
+   "org": "OpenAI",
+   "input": 0.2,
+   "output": 1.2,
+   "scores": {
+    "eci": 58.5,
+    "vibe": 78.6,
+    "vcb": 58.3
+   },
+   "raw": {
+    "eci": 156.67,
+    "vibe": 77.055,
+    "vcb": 22.594
+   }
+  },
+  {
+   "id": "openai/gpt-5.6-sol",
+   "name": "GPT-5.6 Sol",
+   "org": "OpenAI",
+   "input": 4,
+   "output": 20,
+   "scores": {
+    "eci": 74.1,
+    "da": 66.2,
+    "vibe": 83,
+    "vcb": 48.8
+   },
+   "raw": {
+    "eci": 162.99,
+    "da": 1226,
+    "vibe": 80.495,
+    "vcb": 20.011
+   }
+  },
+  {
+   "id": "openai/gpt-5.6-terra",
+   "name": "GPT-5.6 Terra",
+   "org": "OpenAI",
+   "input": 2,
+   "output": 12,
+   "scores": {
+    "eci": 68.5,
+    "da": 29.7,
+    "vibe": 75.4,
+    "vcb": 29.8
+   },
+   "raw": {
+    "eci": 160.73,
+    "da": 1102,
+    "vibe": 74.594,
+    "vcb": 14.822
+   }
+  },
+  {
+   "id": "openai/gpt-6-astra",
+   "name": "GPT-6 Astra",
+   "org": "OpenAI",
+   "input": 10,
+   "output": 50,
+   "scores": {
+    "eci": 89,
+    "aai": 86.9,
+    "aac": 83,
+    "da": 100,
+    "vibe": 94.6,
+    "vcb": 76.8,
+    "swe": 27.1
+   },
+   "raw": {
+    "eci": 169,
+    "aai": 57,
+    "aac": 54.7,
+    "da": 1341,
+    "vibe": 89.594,
+    "vcb": 27.644,
+    "swe": 43.333
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "openai/gpt-6-luna",
+   "name": "GPT-6 Luna",
+   "org": "OpenAI",
+   "input": 0.1,
+   "output": 0.5,
+   "scores": {
+    "eci": 57.8,
+    "aai": 39.3,
+    "aac": 26,
+    "da": 46.8,
+    "vibe": 84.5,
+    "swe": 11.3
+   },
+   "raw": {
+    "eci": 156.41,
+    "aai": 28,
+    "aac": 31.2,
+    "da": 1160,
+    "vibe": 81.649,
+    "swe": 37.5
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "openai/gpt-6-sol",
+   "name": "GPT-6 Sol",
+   "org": "OpenAI",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 76,
+    "da": 62.6,
+    "vibe": 92.4
+   },
+   "raw": {
+    "eci": 163.75,
+    "da": 1214,
+    "vibe": 87.824
+   }
+  },
+  {
+   "id": "openai/gpt-6.1-sol",
+   "name": "GPT-6.1 Sol",
+   "org": "OpenAI",
+   "input": 2,
+   "output": 10,
+   "scores": {
+    "eci": 87.7,
+    "aai": 83.6,
+    "aac": 81.6,
+    "da": 77.4,
+    "vibe": 93.8,
+    "swe": 27.7
+   },
+   "raw": {
+    "eci": 168.48,
+    "aai": 55,
+    "aac": 54.1,
+    "da": 1264,
+    "vibe": 88.931,
+    "swe": 43.542
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "openai/gpt-6.1-terra",
+   "name": "GPT-6.1 Terra",
+   "org": "OpenAI",
+   "input": 1,
+   "output": 5,
+   "scores": {
+    "eci": 85.7,
+    "aai": 77,
+    "aac": 67.2,
+    "vibe": 87.5
+   },
+   "raw": {
+    "eci": 167.67,
+    "aai": 51,
+    "aac": 48.2,
+    "vibe": 83.997
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "xhigh"
+   }
+  },
+  {
+   "id": "openai/gpt-oss-120b",
+   "name": "gpt-oss-120b",
+   "org": "OpenAI",
+   "input": 0.15,
+   "output": 0.6,
+   "scores": {
+    "eci": 17.6,
+    "aai": 0
+   },
+   "raw": {
+    "eci": 140.16,
+    "aai": 4
+   },
+   "effort": {
+    "aai": "high"
+   }
+  },
+  {
+   "id": "openai/gpt-oss-20b",
+   "name": "gpt-oss-20b",
+   "org": "OpenAI",
+   "input": 0.03,
+   "output": 0.13,
+   "scores": {
+    "eci": 4.8
+   },
+   "raw": {
+    "eci": 134.97
+   }
+  },
+  {
+   "id": "qwen/qwen3.5-122b-a10b",
+   "name": "Qwen3.5-122B-A10B",
+   "org": "Qwen",
+   "input": 0.26,
+   "output": 2.08,
+   "scores": {
+    "eci": 36.8,
+    "vibe": 0
+   },
+   "raw": {
+    "eci": 147.9,
+    "vibe": 15.738
+   }
+  },
+  {
+   "id": "qwen/qwen3.6-35b-a3b",
+   "name": "Qwen3.6 35B A3B",
+   "org": "Qwen",
+   "input": 0.1,
+   "output": 0.9,
+   "scores": {
+    "eci": 41.5,
+    "vibe": 12.6
+   },
+   "raw": {
+    "eci": 149.83,
+    "vibe": 25.565
+   }
+  },
+  {
+   "id": "qwen/qwen3.7-max",
+   "name": "Qwen3.7 Max",
+   "org": "Qwen",
+   "input": 1.475,
+   "output": 4.425,
+   "scores": {
+    "eci": 53.2,
+    "da": 55.3,
+    "vibe": 40.9
+   },
+   "raw": {
+    "eci": 154.54,
+    "da": 1189,
+    "vibe": 47.671
+   }
+  },
+  {
+   "id": "qwen/qwen3.7-plus",
+   "name": "Qwen3.7 Plus",
+   "org": "Qwen",
+   "input": 0.32,
+   "output": 1.28,
+   "scores": {
+    "eci": 36.7,
+    "vibe": 39.3
+   },
+   "raw": {
+    "eci": 147.87,
+    "vibe": 46.391
+   }
+  },
+  {
+   "id": "qwen/qwen3.8-27b",
+   "name": "Qwen3.8 27B",
+   "org": "Qwen",
+   "input": 0.15,
+   "output": 1.875,
+   "scores": {
+    "eci": 48.5,
+    "aai": 26.2,
+    "vibe": 62.9
+   },
+   "raw": {
+    "eci": 152.64,
+    "aai": 20,
+    "vibe": 64.85
+   },
+   "effort": {
+    "aai": "xhigh"
+   }
+  },
+  {
+   "id": "qwen/qwen3.8-max-0902",
+   "name": "Qwen3.8 Max (0902)",
+   "org": "Qwen",
+   "input": 2,
+   "output": 6,
+   "scores": {
+    "eci": 60.8,
+    "aai": 49.2,
+    "aac": 45.4,
+    "da": 83.2,
+    "vibe": 78.7,
+    "vcb": 66.5,
+    "swe": 24.9
+   },
+   "raw": {
+    "eci": 157.59,
+    "aai": 34,
+    "aac": 39.2,
+    "da": 1284,
+    "vibe": 77.141,
+    "vcb": 24.833,
+    "swe": 42.5
+   }
+  },
+  {
+   "id": "reflection/beam-1.0-501b-a23b",
+   "name": "Beam 1.0 501B A23B",
+   "org": "Reflection",
+   "input": 0.3,
+   "output": 1,
+   "scores": {
+    "eci": 44.2,
+    "aai": 23,
+    "aac": 0,
+    "vibe": 65
+   },
+   "raw": {
+    "eci": 150.91,
+    "aai": 18,
+    "aac": 20.5,
+    "vibe": 66.436
+   }
+  },
+  {
+   "id": "stepfun/step-5-preview",
+   "name": "Step 5 Preview",
+   "org": "StepFun",
+   "input": 1,
+   "output": 2.7,
+   "scores": {
+    "aai": 41,
+    "aac": 54.9,
+    "vibe": 70,
+    "swe": 20.3
+   },
+   "raw": {
+    "aai": 29,
+    "aac": 43.1,
+    "vibe": 70.399,
+    "swe": 40.833
+   }
+  },
+  {
+   "id": "thinkingmachines/inkling",
+   "name": "Inkling",
+   "org": "Thinking Machines",
+   "input": 1,
+   "output": 4.05,
+   "scores": {
+    "eci": 43.8,
+    "aai": 14.8,
+    "da": 52.1,
+    "vibe": 4.5,
+    "vcb": 2.3
+   },
+   "raw": {
+    "eci": 150.75,
+    "aai": 13,
+    "da": 1178,
+    "vibe": 19.214,
+    "vcb": 7.333
+   }
+  },
+  {
+   "id": "upstage/solar-pro4",
+   "name": "Solar Pro 4",
+   "org": "Upstage",
+   "input": 0.15,
+   "output": 0.6,
+   "scores": {
+    "aai": 16.4
+   },
+   "raw": {
+    "aai": 14
+   }
+  },
+  {
+   "id": "x-ai/grok-4.20",
+   "name": "Grok 4.20",
+   "org": "SpaceXAI",
+   "input": 1.25,
+   "output": 2.5,
+   "scores": {
+    "eci": 47.6
+   },
+   "raw": {
+    "eci": 152.28
+   }
+  },
+  {
+   "id": "x-ai/grok-4.3",
+   "name": "Grok 4.3",
+   "org": "SpaceXAI",
+   "input": 1.25,
+   "output": 2.5,
+   "scores": {
+    "eci": 41.7,
+    "da": 31.8,
+    "vibe": 4.7
+   },
+   "raw": {
+    "eci": 149.89,
+    "da": 1109,
+    "vibe": 19.403
+   }
+  },
+  {
+   "id": "x-ai/grok-4.5",
+   "name": "Grok 4.5",
+   "org": "SpaceXAI",
+   "input": 2,
+   "output": 6,
+   "scores": {
+    "eci": 54.3,
+    "vibe": 68.3
+   },
+   "raw": {
+    "eci": 154.98,
+    "vibe": 69.002
+   }
+  },
+  {
+   "id": "x-ai/grok-4.6",
+   "name": "Grok 4.6",
+   "org": "SpaceXAI",
+   "input": 2,
+   "output": 6,
+   "scores": {
+    "eci": 61.3,
+    "vibe": 77.5,
+    "vcb": 29.5
+   },
+   "raw": {
+    "eci": 157.79,
+    "vibe": 76.239,
+    "vcb": 14.75
+   }
+  },
+  {
+   "id": "x-ai/grok-4.7",
+   "name": "Grok 4.7",
+   "org": "SpaceXAI",
+   "input": 2,
+   "output": 6,
+   "scores": {
+    "eci": 57.3,
+    "aai": 50.8,
+    "aac": 63.3,
+    "vibe": 90.3,
+    "swe": 26
+   },
+   "raw": {
+    "eci": 156.18,
+    "aai": 35,
+    "aac": 46.6,
+    "vibe": 86.175,
+    "swe": 42.917
+   },
+   "effort": {
+    "aai": "xhigh",
+    "aac": "xhigh"
+   }
+  },
+  {
+   "id": "xiaomi/mimo-v2.5",
+   "name": "MiMo-V2.5",
+   "org": "Xiaomi",
+   "input": 0.4,
+   "output": 2,
+   "scores": {
+    "vibe": 33.9
+   },
+   "raw": {
+    "vibe": 42.174
+   }
+  },
+  {
+   "id": "xiaomi/mimo-v2.6-flash",
+   "name": "MiMo-V2.6-Flash",
+   "org": "Xiaomi",
+   "input": 0.14,
+   "output": 0.28,
+   "scores": {
+    "aai": 37.7,
+    "vibe": 81
+   },
+   "raw": {
+    "aai": 27,
+    "vibe": 78.96
+   }
+  },
+  {
+   "id": "xiaomi/mimo-v2.6-pro",
+   "name": "MiMo-V2.6-Pro",
+   "org": "Xiaomi",
+   "input": 0.435,
+   "output": 0.87,
+   "scores": {
+    "aai": 42.6,
+    "vibe": 89,
+    "swe": 21.5
+   },
+   "raw": {
+    "aai": 30,
+    "vibe": 85.223,
+    "swe": 41.25
+   }
+  },
+  {
+   "id": "z-ai/glm-5.1",
+   "name": "GLM 5.1",
+   "org": "Z.ai",
+   "input": 1.33,
+   "output": 4.18,
+   "scores": {
+    "eci": 43.8,
+    "da": 46.5,
+    "vibe": 20.1
+   },
+   "raw": {
+    "eci": 150.73,
+    "da": 1159,
+    "vibe": 31.456
+   }
+  },
+  {
+   "id": "z-ai/glm-5.2",
+   "name": "GLM 5.2",
+   "org": "Z.ai",
+   "input": 0.007,
+   "output": 6.8,
+   "scores": {
+    "eci": 49.5,
+    "da": 60,
+    "vibe": 61.8
+   },
+   "raw": {
+    "eci": 153.03,
+    "da": 1205,
+    "vibe": 63.961
+   }
+  },
+  {
+   "id": "z-ai/glm-5.3",
+   "name": "GLM 5.3",
+   "org": "Z.ai",
+   "input": 0.0699,
+   "output": 1.4,
+   "scores": {
+    "eci": 59.5,
+    "aai": 45.9,
+    "aac": 68.9,
+    "da": 79.4,
+    "vibe": 79.9,
+    "vcb": 48.7
+   },
+   "raw": {
+    "eci": 157.1,
+    "aai": 32,
+    "aac": 48.9,
+    "da": 1271,
+    "vibe": 78.125,
+    "vcb": 19.994
+   },
+   "effort": {
+    "aai": "max",
+    "aac": "max"
+   }
+  },
+  {
+   "id": "z-ai/glm-5.3-flash",
+   "name": "GLM 5.3 Flash",
+   "org": "Z.ai",
+   "input": 0.0399,
+   "output": 0.0784,
+   "scores": {
+    "eci": 51.4,
+    "aai": 39.3,
+    "vibe": 19.2,
+    "vcb": 34.2
+   },
+   "raw": {
+    "eci": 153.82,
+    "aai": 28,
+    "vibe": 30.759,
+    "vcb": 16.033
+   }
+  },
+  {
+   "id": "z-ai/glm-5v-turbo",
+   "name": "GLM 5V Turbo",
+   "org": "Z.ai",
+   "input": 1.2,
+   "output": 4,
+   "scores": {
+    "da": 31.2
+   },
+   "raw": {
+    "da": 1107
+   }
+  }
+ ]
+}

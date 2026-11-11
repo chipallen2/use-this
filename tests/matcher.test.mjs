@@ -17,16 +17,9 @@ import {
   findOpenRouterModel,
   toUnmatchedEntry,
   attachOpenRouter,
-  blendCodingScores,
-  medianUsageTokens,
   parseAACodingHTML,
-  addContributorTwins,
-  pickCheapestAbove,
-  pickCheapestMatched,
-  isUnmatched,
   parseVALSJson,
   VALS_BENCHES,
-  VALS_WEIGHTS,
 } from "../scripts/scrape.mjs";
 
 // Minimal fake OpenRouter catalog: id (+ pricing fields the matcher reads).
@@ -221,88 +214,6 @@ test("coding: bare family names + ultraspeed rollup resolve", () => {
   assert.equal(resolve("design-arena:mimo-v2-6-pro-ultraspeed").model.id, "xiaomi/mimo-v2.6-pro-ultraspeed");
 });
 
-test("coding: blended pool carries both signals, design-only priced at scale", () => {
-  // one AA Coding row + one Design row for the same model -> 50/50 blend;
-  // a Design-only model gets a cost estimate scaled to AA coding usage.
-  const deep = [
-    { rawName: "gpt-6-astra [xhigh]", model: "gpt-6-astra", effort: "xhigh", score: 74, costPerTask: 4.43, outputTokens: 30000, orPromptPerMillion: 10, orCompletionPerMillion: 50, openRouterId: "openai/gpt-6-astra", effortSupported: true },
-    { rawName: "gemini-3.5-flash [high]", model: "gemini-3.5-flash", effort: "high", score: 36, costPerTask: 3.45, outputTokens: 76000, orPromptPerMillion: 1.5, orCompletionPerMillion: 9, openRouterId: "google/gemini-3.5-flash", effortSupported: true },
-  ];
-  const design = [
-    { rawName: "design-arena:gpt-6-astra", model: "gpt-6-astra", effort: null, score: 80, elo: 1324, costPerTask: null, daPricePerMillion: 20, orPromptPerMillion: 10, orCompletionPerMillion: 50, openRouterId: "openai/gpt-6-astra", effortSupported: true },
-    { rawName: "design-arena:glm-5-2", model: "glm-5-2", effort: null, score: 60, elo: 1215, costPerTask: null, daPricePerMillion: 2.225, orPromptPerMillion: 1.4, orCompletionPerMillion: 4.4, openRouterId: "z-ai/glm-5.2", effortSupported: true },
-  ];
-  const blended = blendCodingScores(deep, design);
-  const byId = new Map(blended.map((x) => [x.openRouterId, x]));
-  // Renormalized blend: AA 35% + Design 25% (VALS absent). AA norms: 74->100, 36->0.
-  // gpt-6-astra: (0.35*100 + 0.25*80)/0.6 = 91.7. Design-only glm-5.2: 100% of Design norm.
-  assert.equal(byId.get("openai/gpt-6-astra").score, 91.7, "(35 AA + 25 Design)/60 renormalized");
-  assert.equal(byId.get("openai/gpt-6-astra").aaRaw, 74);
-  assert.equal(byId.get("google/gemini-3.5-flash").score, 0, "AA-only keeps normalized signal at 100% weight");
-  // blended model averages both signals
-  assert.ok(byId.get("openai/gpt-6-astra").sources.includes("renormalized"), `sources note the missing VALS: ${byId.get("openai/gpt-6-astra").sources}`);
-  assert.ok(byId.get("openai/gpt-6-astra").designElo === 1324);
-  // design-only model: estimated cost uses registry price at median usage
-  const only = byId.get("z-ai/glm-5.2");
-  assert.equal(only.sources, "Design (renormalized - 4 signals absent)");
-  const usage = medianUsageTokens(deep);
-  assert.ok(usage > 0, "median usage positive");
-  assert.ok(Math.abs(only.costPerTask - (2.225 * usage) / 1_000_000) < 0.015, `cost scaled to usage: ${only.costPerTask}`);
-});
-
-// ---- 2026-10-14 graceful degradation: new models never break the build ----
-// Fake future models (Opus 6, GPT-7) flow through attachOpenRouter as their
-// own NEW entries (score + price intact, no mislabel), and winner selection
-// prefers matched models while still deploying when everything is unknown.
-test("graceful: fake future Opus 6 + GPT-7 deploy as NEW, never mislabeled", () => {
-  const rows = [
-    { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 58, costPerTask: 5.98 },
-    { rawName: "Claude Opus 6 (max)", model: "Claude Opus 6", effort: "max", score: 64, costPerTask: 7.5 },
-    { rawName: "GPT-7 Astra (max)", model: "GPT-7 Astra", effort: "max", score: 62, costPerTask: 6.0 },
-  ];
-  const pool = attachOpenRouter(rows, CATALOG);
-  const news = pool.filter(isUnmatched);
-  assert.equal(news.length, 2, "both future models kept as own entries");
-  const opus6 = news.find((x) => x.model === "Claude Opus 6");
-  assert.ok(opus6, "Opus 6 present under its own name");
-  assert.equal(opus6.score, 64);
-  assert.equal(opus6.costPerTask, 7.5);
-  assert.ok(!pool.some((x) => x.model === "Claude Opus 6" && x.openRouterId === "anthropic/claude-opus-5.5"), "Opus 6 NOT collapsed onto Opus 5.5");
-  const gpt7 = news.find((x) => x.model === "GPT-7 Astra");
-  assert.ok(gpt7, "GPT-7 present under its own name");
-  assert.ok(gpt7.openRouterId.startsWith("unmatched:"), "synthetic id");
-});
-
-test("graceful: winner skips unmatched for cheapest matched", () => {
-  // Opus 6 is cheapest above cutoff but unknown -> winner is matched Opus 5.5.
-  const pool = attachOpenRouter([
-    { rawName: "Claude Opus 6 (max)", model: "Claude Opus 6", effort: "max", score: 64, costPerTask: 1.0 },
-    { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 58, costPerTask: 5.98 },
-  ], CATALOG);
-  const elig = pickCheapestMatched(pool, 50);
-  assert.equal(elig[0].openRouterId, "anthropic/claude-opus-5.5", "matched winner, unmatched skipped");
-  assert.ok(!isUnmatched(elig[0]));
-});
-
-test("graceful: all-unmatched pool still picks a winner (NEW tag path)", () => {
-  const pool = attachOpenRouter([
-    { rawName: "Claude Opus 6 (max)", model: "Claude Opus 6", effort: "max", score: 64, costPerTask: 7.5 },
-    { rawName: "GPT-7 Astra (max)", model: "GPT-7 Astra", effort: "max", score: 62, costPerTask: 6.0 },
-  ], CATALOG);
-  assert.ok(pool.every(isUnmatched), "everything unknown");
-  const elig = pickCheapestMatched(pool, 50);
-  assert.equal(elig[0].model, "GPT-7 Astra", "cheapest unknown wins instead of throwing");
-  assert.ok(elig[0].openRouterId.startsWith("unmatched:"), "card renders via NEW-tag path");
-});
-
-test("graceful: empty cutoff still throws (real data problem, not new models)", () => {
-  const pool = attachOpenRouter([
-    { rawName: "Claude Opus 5.5 (max)", model: "Claude Opus 5.5", effort: "max", score: 10, costPerTask: 5.98 },
-  ], CATALOG);
-  assert.throws(() => pickCheapestMatched(pool, 50), /No eligible model/, "no eligible model still fails loud");
-});
-
-
 // Frozen live AA coding source, independently fetched 2026-10-16.
 const codingHTML = readFileSync(new URL("./fixtures/aa-coding-2026-10-16.html", import.meta.url), "utf8");
 test("AA coding: real Flight rows have source-grounded names, scores, costs and efforts", () => {
@@ -344,110 +255,9 @@ test("AA coding: malformed/missing metrics cannot consume the next row", () => {
   assert.throws(() => parseAACodingHTML("<html>No board</html>"), /Could not parse/);
 });
 
-test("AA coding: unknown price is never treated as zero or selected as cheapest", () => {
-  const rows = [{openRouterId: "test/unpriced", score: 100, costPerTask: null}, {openRouterId: "test/priced", score: 98, costPerTask: 4}];
-  assert.equal(pickCheapestMatched(rows, 97)[0].openRouterId, "test/priced");
-});
-
 test("catalog prefix boundary: absent legacy listing never borrows newer version", () => {
   assert.equal(findOpenRouterModel("Opus 5", [or("anthropic/claude-opus-5.5")]).kind, "unmatched");
   assert.equal(findOpenRouterModel("GPT-6 Sol", [or("openai/gpt-6-solstice")]).kind, "unmatched");
-});
-
-test("contributor twin inherits the final AA/Design blend and preserves missing price", () => {
-  const catalog = [or("meta/muse-spark-1.3", 1, 3), or("meta/muse-spark-1.3-contributor", 0.1, 0.3)];
-  const aa = [{openRouterId: catalog[0].id, score: 70, costPerTask: 2, effort: "max"}, {openRouterId: "other/model", score: 30, costPerTask: 1}];
-  const design = [{openRouterId: catalog[0].id, score: 40, elo: 1200}];
-  const rows = addContributorTwins(blendCodingScores(aa, design), catalog);
-  const regular = rows.find((x) => x.openRouterId === catalog[0].id);
-  const twin = rows.find((x) => x.openRouterId === catalog[1].id);
-  // Renormalized: regular has AA (norm 100) + Design (passthrough 40) ->
-  // (0.35*100 + 0.25*40)/0.6 = 75; twin inherits the same blend.
-  assert.equal(twin.score, 75); assert.equal(twin.score, regular.score);
-  assert.equal(twin.sources, regular.sources); assert.equal(twin.designElo, 1200);
-  assert.equal(addContributorTwins([{...aa[0], costPerTask: null}], catalog)[1].costPerTask, null);
-});
-
-// ---- 2026-10-18 VALS renormalization: five signals, renormalized blend ----
-// Weight design: AA 35% + Design 25% + each VALS 13.33%. Missing signals
-// are excluded from numerator AND denominator - never zero, never penalty.
-// Ground truth: the three frozen VALS fixtures + a small AA/Design pool.
-test("vals: Sonnet 5.5 (vibe+swe present, vcb+design absent) scores fairly", () => {
-  const aa = [
-    { rawName: "Opus 5.5 [max]", model: "Opus 5.5", effort: "max", score: 66, costPerTask: 13.04, outputTokens: 50000, openRouterId: "anthropic/claude-opus-5.5", effortSupported: true },
-    { rawName: "Sonnet 5.5 [max]", model: "Sonnet 5.5", effort: "max", score: 68.4, costPerTask: 14.19, outputTokens: 50000, openRouterId: "anthropic/claude-sonnet-5.5", effortSupported: true },
-  ];
-  const design = [
-    { rawName: "design-arena:opus-5-5", model: "Opus 5.5", effort: null, score: 70, elo: 1258, costPerTask: null, daPricePerMillion: 8, orPromptPerMillion: 5, orCompletionPerMillion: 22, openRouterId: "anthropic/claude-opus-5.5", effortSupported: true },
-  ];
-  const vibeDoc = JSON.parse(readFileSync(new URL("./fixtures/vals-vibe-code-2026-10-18.json", import.meta.url), "utf8"));
-  const vibe = parseVALSJson(vibeDoc, "VALS Vibe Code");
-  const vcb = parseVALSJson(JSON.parse(readFileSync(new URL("./fixtures/vals-vcb-1-100-2026-10-18.json", import.meta.url), "utf8")), "VALS VCB 1-100");
-  const swe = parseVALSJson(JSON.parse(readFileSync(new URL("./fixtures/vals-swe-multimodal-2026-10-18.json", import.meta.url), "utf8")), "VALS SWE Multimodal");
-  // Attach to the fake catalog rows used below (raw VALS ids are bare vendor slugs).
-  const valsPools = {
-    vibe: attachOpenRouter(vibe.filter((r) => /opus-5-5|sonnet-5-5|gpt-6-astra|gemini-4-argon/.test(r.rawName)), CATALOG),
-    vcb: attachOpenRouter(vcb, CATALOG),
-    swe: attachOpenRouter(swe, CATALOG),
-  };
-  const blended = blendCodingScores(aa, design, valsPools);
-  const byId = new Map(blended.map((x) => [x.openRouterId, x]));
-  const sonnet = byId.get("anthropic/claude-sonnet-5.5");
-  const opus = byId.get("anthropic/claude-opus-5.5");
-  assert.ok(sonnet, "sonnet present");
-  assert.ok(opus, "opus present");
-  // Sonnet 5.5 must NOT be penalized for absent Design + VCB: it carries
-  // AA + Vibe + SWE only, and its sources line says renormalized.
-  assert.ok(sonnet.sources.includes("renormalized"), `sonnet sources: ${sonnet.sources}`);
-  assert.equal(sonnet.designScore, null, "no design signal");
-  assert.equal(sonnet.valsVcbScore, null, "no vcb signal");
-  assert.ok(sonnet.valsVibeScore != null && sonnet.valsSweScore != null, "vibe + swe present");
-  assert.ok(sonnet.valsVibeRaw != null && sonnet.valsSweRaw != null, "raw accuracies carried");
-  // Opus 5.5 has AA + Design + Vibe + VCB + SWE = full 5-signal sources line.
-  assert.equal(opus.sources, "35% AA Coding + 25% Design Frontend + 13.3% each VALS Vibe/VCB/SWE", `opus sources: ${opus.sources}`);
-  // Weight sanity: exported weights sum to 1.
-  const wSum = VALS_WEIGHTS.aa + VALS_WEIGHTS.design + VALS_WEIGHTS.valsVibe + VALS_WEIGHTS.valsVcb + VALS_WEIGHTS.valsSwe;
-  assert.ok(Math.abs(wSum - 1) < 1e-9, `weights sum to 1, got ${wSum}`);
-  assert.equal(VALS_BENCHES.length, 3, "three VALS benches");
-  // Order check: sonnet (top AA raw + top vibe acc) outscores opus here.
-  assert.ok(sonnet.score > opus.score, `sonnet ${sonnet.score} > opus ${opus.score}`);
-});
-
-test("vals: all-5-signals uses full weights, single-signal uses 100% of its norm", () => {
-  // Synthetic pool where every model has every signal via identical pools:
-  // with one AA row + one design row + one vals row each, norms are 50s
-  // and the blend must equal the weighted mean of the per-signal norms.
-  const aa = [
-    { rawName: "A [max]", model: "A", effort: "max", score: 80, costPerTask: 5, outputTokens: 1000, openRouterId: "anthropic/claude-opus-5.5", effortSupported: true },
-    { rawName: "B [max]", model: "B", effort: "max", score: 60, costPerTask: 4, outputTokens: 1000, openRouterId: "anthropic/claude-sonnet-5.5", effortSupported: true },
-  ];
-  const design = [
-    { rawName: "da:a", model: "A", effort: null, score: 90, elo: 1300, costPerTask: null, daPricePerMillion: 5, orPromptPerMillion: 5, orCompletionPerMillion: 20, openRouterId: "anthropic/claude-opus-5.5", effortSupported: true },
-    { rawName: "da:b", model: "B", effort: null, score: 70, elo: 1200, costPerTask: null, daPricePerMillion: 4, orPromptPerMillion: 4, orCompletionPerMillion: 16, openRouterId: "anthropic/claude-sonnet-5.5", effortSupported: true },
-  ];
-  const mk = (id, s) => ({ rawName: id, model: id, effort: null, score: s, openRouterId: id === "A" ? "anthropic/claude-opus-5.5" : "anthropic/claude-sonnet-5.5" });
-  const valsPools = {
-    vibe: [mk("A", 95), mk("B", 85)],
-    vcb: [mk("A", 40), mk("B", 20)],
-    swe: [mk("A", 70), mk("B", 50)],
-  };
-  const blended = blendCodingScores(aa, design, valsPools);
-  const byId = new Map(blended.map((x) => [x.openRouterId, x]));
-  const A = byId.get("anthropic/claude-opus-5.5");
-  const B = byId.get("anthropic/claude-sonnet-5.5");
-  // AA + 3xVALS min-max norm to 100/0; Design scores are already 0-100
-  // upstream (no min-max on that leg). Full-weight blend:
-  // A = .35*100 + .25*90 + 3*(.1333*100) = 97.5; B = .35*0 + .25*70 + 0 = 17.5.
-  assert.equal(A.score, 97.5, `A full-weight blend: ${A.score}`);
-  assert.equal(B.score, 17.5, `B full-weight blend: ${B.score}`);
-  assert.equal(A.sources, "35% AA Coding + 25% Design Frontend + 13.3% each VALS Vibe/VCB/SWE");
-  // Single-signal model: only Design present -> 100% of its norm.
-  // Design scores pass through unnormalized (already 0-100 upstream),
-  // so the lone model keeps its 90.
-  const lone = blendCodingScores([], [{ ...design[0] }], {});
-  assert.equal(lone.length, 1);
-  assert.equal(lone[0].score, 90, `lone design-only model: ${lone[0].score}`);
-  assert.ok(lone[0].sources.includes("renormalized"));
 });
 
 test("vals: parseVALSJson reads raw accuracies, fails loud on bad docs", () => {

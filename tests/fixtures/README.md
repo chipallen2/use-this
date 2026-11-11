@@ -1,7 +1,7 @@
 # tests/fixtures/ - source-grounded test snapshots (2026-10-16)
 
-Independently fetched source copies. Tests in e2e.test.mjs assert pool
-rows match these SOURCE values - not just local candidates.json.
+Independently fetched source copies. Parser tests (matcher.test.mjs, models-data.test.mjs) assert
+parsed rows match these SOURCE values.
 
 | File | Source | Fetch | Key values |
 |---|---|---|---|
@@ -9,6 +9,7 @@ rows match these SOURCE values - not just local candidates.json.
 | design-arena-2026-10-16.json | POST https://www.designarena.ai/api/leaderboard (agon_webapps) | direct curl | claude-opus-5 Elo 1258, battles 1730; NO claude-opus-5.5 row |
 | aa-models-2026-10-16.html | https://artificialanalysis.ai/leaderboards/models (Intelligence Index, chat board) | scrape.do L1 | Opus 5.5 (max) 58 @ $5.98; legacy Opus 5 deprecated:true, NOT on current board |
 
+| eci-scores-2026-11-11.csv | https://epoch.ai/data/eci_scores.csv (Epoch AI, CC-BY 4.0) | direct curl | Claude Opus 5.5 eci 168.54; 256 rows |
 | aa-coding-2026-10-16.html | https://artificialanalysis.ai/agents/coding-agents | scrape.do L1, independently re-fetched direct during review | Sonnet 5.5 max 68.4 / $14.19, Opus 5.5 max 66 / $13.04; Beam 27.7 with null cost, Wonder Full 68 with null cost |
 
 DeepSWE fixture is retained as historical evidence only. It no longer supplies coding assertions. Design snapshot refreshed during review after its Elo changed by one point.
@@ -35,6 +36,6 @@ curl -s --max-time 90 --location \
   -o tests/fixtures/aa-models-YYYY-MM-DD.html
 ```
 
-Then rename the fixture filenames in e2e.test.mjs (parse*Fixture fns)
-and carry the new pinned values into the FIX_* constants. Fixtures are
+Then update the fixture filenames and pinned values in matcher.test.mjs /
+models-data.test.mjs. Fixtures are
 snapshots - tests pin the fetch-date values, they never hit the network.
